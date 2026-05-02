@@ -1,0 +1,51 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --color-primary: #10b981; /* emerald-500 */
+  --color-primary-dark: #059669; /* emerald-600 */
+  --color-sleek-bg: #f8fafc; /* slate-50 */
+  --color-sleek-card: #ffffff;
+  --color-sleek-border: #e2e8f0; /* slate-200 */
+  --color-sleek-text: #0f172a; /* slate-900 */
+  --color-sleek-muted: #94a3b8; /* slate-400 */
+  --color-sleek-description: #475569; /* slate-600 */
+}
+
+body {
+  background-color: var(--color-sleek-bg);
+  color: var(--color-sleek-text);
+  font-family: var(--font-sans);
+}
+
+.sleek-card {
+  @apply bg-white rounded-3xl p-8 border border-sleek-border shadow-sm;
+}
+
+.sleek-label {
+  @apply text-sm font-bold text-sleek-muted uppercase tracking-widest mb-4 block;
+}
+
+.sleek-button {
+  @apply w-full py-4 bg-primary hover:bg-primary-dark text-white rounded-2xl font-bold text-lg shadow-[0_4px_0_#0d9488] active:translate-y-1 active:shadow-none transition-all disabled:opacity-50 disabled:translate-y-0 disabled:shadow-none;
+}
+
+.markdown-body {
+  @apply space-y-6 leading-relaxed;
+}
+
+.markdown-body h1, .markdown-body h2, .markdown-body h3 {
+  @apply font-bold text-sleek-text mt-6 mb-2;
+}
+
+.markdown-body p {
+  @apply text-sleek-description text-lg;
+}
+
+.grammar-step {
+  @apply flex gap-4 p-4 rounded-2xl transition-colors hover:bg-slate-50;
+}
+
+.step-number {
+  @apply shrink-0 w-10 h-10 rounded-full flex items-center justify-center font-bold text-sm;
+}

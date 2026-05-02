@@ -1,0 +1,58 @@
+{
+  "entities": {
+    "Vocabulary": {
+      "title": "Vocabulary",
+      "description": "A specific word or phrase saved by the user from their sentences",
+      "type": "object",
+      "properties": {
+        "word": { "type": "string", "description": "The Chinese word or phrase" },
+        "type": { "type": "string", "enum": ["word", "grammar"], "description": "The category of the saved item" },
+        "userId": { "type": "string", "description": "The ID of the user" },
+        "sentenceId": { "type": "string", "description": "The ID of the sentence it was saved from" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Timestamp" }
+      },
+      "required": ["word", "type", "userId", "sentenceId", "createdAt"]
+    },
+    "Category": {
+      "title": "Category",
+      "description": "A user-defined category for organizing saved sentences",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string", "description": "The name of the category" },
+        "userId": { "type": "string", "description": "The ID of the user who owns the category" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Timestamp of creation" }
+      },
+      "required": ["name", "userId", "createdAt"]
+    },
+    "SavedSentence": {
+      "title": "Saved Sentence",
+      "description": "A sentence translated and saved by the user for learning",
+      "type": "object",
+      "properties": {
+        "originalText": { "type": "string", "description": "The Vietnamese text input by the user" },
+        "chinese": { "type": "string", "description": "The translated Chinese characters" },
+        "pinyin": { "type": "string", "description": "The Pinyin pronunciation" },
+        "meaning": { "type": "string", "description": "The English meaning" },
+        "grammarExplanation": { "type": "string", "description": "Markdown explanation of the grammar" },
+        "userId": { "type": "string", "description": "The ID of the user who saved the sentence" },
+        "categoryId": { "type": "string", "description": "The ID of the category this sentence belongs to" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Timestamp of when the sentence was saved" }
+      },
+      "required": ["originalText", "chinese", "pinyin", "meaning", "grammarExplanation", "userId", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/saved_sentences/{sentenceId}": {
+      "schema": "SavedSentence",
+      "description": "Collection of sentences saved by users"
+    },
+    "/categories/{categoryId}": {
+      "schema": "Category",
+      "description": "Collection of user-defined categories"
+    },
+    "/vocabulary/{wordId}": {
+      "schema": "Vocabulary",
+      "description": "Collection of saved words/vocabulary"
+    }
+  }
+}

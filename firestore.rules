@@ -1,0 +1,93 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Default deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Global helpers
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerified() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    // Saved Sentences validation
+    function isValidSavedSentence(data) {
+      return data.keys().hasAll(['originalText', 'chinese', 'pinyin', 'meaning', 'grammarExplanation', 'userId', 'createdAt'])
+        && (data.keys().size() == 7 || (data.keys().size() == 8 && data.keys().hasAll(['categoryId'])))
+        && data.originalText is string && data.originalText.size() <= 1000
+        && data.chinese is string && data.chinese.size() <= 500
+        && data.pinyin is string && data.pinyin.size() <= 500
+        && data.meaning is string && data.meaning.size() <= 1000
+        && data.grammarExplanation is string && data.grammarExplanation.size() <= 10000
+        && data.userId is string && data.userId == request.auth.uid
+        && (data.get('categoryId', '') == '' || (data.categoryId is string && isValidId(data.categoryId)));
+    }
+
+    function isValidCategory(data) {
+      return data.keys().hasAll(['name', 'userId', 'createdAt'])
+        && data.keys().size() == 3
+        && data.name is string && data.name.size() <= 100
+        && data.userId is string && data.userId == request.auth.uid
+        && data.createdAt == request.time;
+    }
+
+    function isValidVocabulary(data) {
+      return data.keys().hasAll(['word', 'type', 'userId', 'sentenceId', 'createdAt'])
+        && data.keys().size() == 5
+        && data.word is string && data.word.size() <= 100
+        && data.type is string && (data.type == 'word' || data.type == 'grammar')
+        && data.sentenceId is string && isValidId(data.sentenceId)
+        && data.userId is string && data.userId == request.auth.uid
+        && data.createdAt == request.time;
+    }
+
+    match /saved_sentences/{sentenceId} {
+      allow create: if isVerified() && isValidSavedSentence(incoming()) && incoming().createdAt == request.time;
+      allow update: if isVerified() && isOwner(existing().userId) 
+                    && isValidSavedSentence(incoming())
+                    && incoming().createdAt == existing().createdAt
+                    && incoming().userId == existing().userId
+                    && incoming().originalText == existing().originalText
+                    && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['categoryId']);
+      allow get: if isOwner(existing().userId);
+      allow list: if isOwner(resource.data.userId);
+      allow delete: if isOwner(existing().userId);
+    }
+
+    match /categories/{categoryId} {
+      allow create: if isVerified() && isValidCategory(incoming());
+      allow update: if isVerified() && isOwner(existing().userId) && isValidCategory(incoming());
+      allow get: if isOwner(existing().userId);
+      allow list: if isOwner(resource.data.userId);
+      allow delete: if isOwner(existing().userId);
+    }
+
+    match /vocabulary/{wordId} {
+      allow create: if isVerified() && isValidVocabulary(incoming());
+      allow get: if isOwner(existing().userId);
+      allow list: if isOwner(resource.data.userId);
+      allow delete: if isOwner(existing().userId);
+    }
+  }
+}
