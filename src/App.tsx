@@ -76,7 +76,9 @@ export default function App() {
   const [categories, setCategories] = useState<Category[]>([]);
   const [vocabulary, setVocabulary] = useState<Vocabulary[]>([]);
   const [showHistory, setShowHistory] = useState(false);
-  const [showQuiz, setShowQuiz] = useState(false);
+  const [activeView, setActiveView] = useState<'home' | 'tests'>('home');
+  const [testType, setTestType] = useState<'vocabulary' | 'grammar' | null>(null);
+  const [quizWord, setQuizWord] = useState<Vocabulary | null>(null);
   const [quizSentence, setQuizSentence] = useState<SavedSentence | null>(null);
   const [quizTimer, setQuizTimer] = useState(15);
   const [quizStage, setQuizStage] = useState<'idle' | 'running' | 'revealed'>('idle');
@@ -205,8 +207,23 @@ export default function App() {
     setQuizSentence(random);
     setQuizTimer(15);
     setQuizStage('running');
-    setShowQuiz(true);
-    setResult(null); // Clear main view result
+    setTestType('grammar');
+    setActiveView('tests');
+    setResult(null); 
+  };
+
+  const startVocabQuiz = () => {
+    if (vocabulary.length === 0) {
+      setError("Bạn cần lưu ít nhất 1 từ vựng trong sổ tay để làm bài test!");
+      return;
+    }
+    const random = vocabulary[Math.floor(Math.random() * vocabulary.length)];
+    setQuizWord(random);
+    setQuizTimer(15);
+    setQuizStage('running');
+    setTestType('vocabulary');
+    setActiveView('tests');
+    setResult(null);
   };
 
   useEffect(() => {
@@ -488,6 +505,23 @@ export default function App() {
           <span className="font-bold text-xl tracking-tight hidden sm:block">Zhongwen AI</span>
         </div>
         
+        <div className="flex-1 flex justify-center overflow-x-auto px-4 md:px-0">
+          <div className="flex bg-slate-100 p-1 rounded-xl">
+            <button 
+              onClick={() => { setActiveView('home'); setShowHistory(false); setTestType(null); }}
+              className={`px-6 py-2 rounded-lg text-sm font-bold transition-all flex items-center gap-2 ${activeView === 'home' ? 'bg-white text-primary shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+            >
+              <Sparkles size={16} /> Bài học
+            </button>
+            <button 
+              onClick={() => { setActiveView('tests'); setTestType(null); }}
+              className={`px-6 py-2 rounded-lg text-sm font-bold transition-all flex items-center gap-2 ${activeView === 'tests' ? 'bg-white text-orange-500 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+            >
+              <Zap size={16} /> Khảo thí 
+            </button>
+          </div>
+        </div>
+
         <div className="flex items-center gap-4 md:gap-8">
           <div className="hidden md:flex items-center gap-3">
             <div className="w-48 h-3 bg-slate-100 rounded-full overflow-hidden">
@@ -530,59 +564,35 @@ export default function App() {
       </nav>
 
       {/* Main Workspace */}
-      <main className="flex-1 p-4 md:p-8 grid grid-cols-1 lg:grid-cols-12 gap-8 max-w-[1440px] mx-auto w-full items-start">
-        
-        {/* Left Panel: Input & History Toggle */}
-        <div className="lg:col-span-5 flex flex-col gap-6 lg:sticky lg:top-24">
-          
-          <div className="flex items-center justify-between mb-2">
-            <h2 className="text-xl font-bold text-slate-700 flex items-center gap-2">
-              {showHistory ? <History className="text-primary" /> : showQuiz ? <Zap className="text-orange-500" /> : <Sparkles className="text-primary" />}
-              {showHistory ? 'Lịch sử học tập' : showQuiz ? 'Thử thách 15s' : 'Bài học mới'}
-            </h2>
-            <div className="flex gap-4">
-              {!showQuiz && !showHistory && (
-                <div className="flex bg-slate-100 p-1 rounded-lg">
+      <main className="flex-1 p-4 md:p-8 max-w-[1440px] mx-auto w-full">
+        {activeView === 'home' ? (
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
+            {/* Left Panel: Input & History Toggle */}
+            <div className="lg:col-span-5 flex flex-col gap-6 lg:sticky lg:top-24">
+              
+              <div className="flex items-center justify-between mb-2">
+                <h2 className="text-xl font-bold text-slate-700 flex items-center gap-2">
+                  {showHistory ? <History className="text-primary" /> : <Sparkles className="text-primary" />}
+                  {showHistory ? 'Lịch sử học tập' : 'Bài học mới'}
+                </h2>
+                <div className="flex gap-4">
                   <button 
-                    onClick={() => setQuizMode('zh2vi')}
-                    className={`px-3 py-1 text-[10px] font-bold rounded-md transition-all ${quizMode === 'zh2vi' ? 'bg-white text-primary shadow-sm' : 'text-slate-400'}`}
+                    onClick={() => {
+                      setShowHistory(!showHistory);
+                    }}
+                    className="text-sm font-bold text-primary hover:underline flex items-center gap-1"
                   >
-                    TRUNG → VIỆT
-                  </button>
-                  <button 
-                    onClick={() => setQuizMode('vi2zh')}
-                    className={`px-3 py-1 text-[10px] font-bold rounded-md transition-all ${quizMode === 'vi2zh' ? 'bg-white text-primary shadow-sm' : 'text-slate-400'}`}
-                  >
-                    VIỆT → TRUNG
+                    {showHistory ? 'Về trang học' : 'Xem lịch sử'}
                   </button>
                 </div>
-              )}
-              {!showQuiz && (
-                <button 
-                  onClick={() => startQuiz()}
-                  className="text-sm font-bold text-orange-500 hover:underline flex items-center gap-1"
-                >
-                  <Zap size={16} /> Làm Test
-                </button>
-              )}
-              <button 
-                onClick={() => {
-                  setShowHistory(!showHistory);
-                  setShowQuiz(false);
-                }}
-                className="text-sm font-bold text-primary hover:underline flex items-center gap-1"
-              >
-                {showHistory ? 'Về trang học' : 'Xem lịch sử'}
-              </button>
-            </div>
-          </div>
+              </div>
 
-          {!showHistory && !showQuiz ? (
-            <motion.div 
-              initial={{ opacity: 0, x: -20 }}
-              animate={{ opacity: 1, x: 0 }}
-              className="space-y-6"
-            >
+              {!showHistory ? (
+                <motion.div 
+                  initial={{ opacity: 0, x: -20 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  className="space-y-6"
+                >
               <div className="sleek-card flex flex-col min-h-[300px]">
                 <div className="flex justify-between items-center mb-4">
                   <label className="sleek-label mb-0">Ý tưởng của bạn</label>
@@ -627,90 +637,6 @@ export default function App() {
               </button>
               
               {error && <p className="text-rose-500 font-bold text-center text-sm">{error}</p>}
-            </motion.div>
-          ) : showQuiz ? (
-            <motion.div 
-              initial={{ opacity: 0, scale: 0.95 }}
-              animate={{ opacity: 1, scale: 1 }}
-              className="space-y-6"
-            >
-              <div className="sleek-card min-h-[400px] flex flex-col items-center justify-center text-center relative overflow-hidden bg-white">
-                {/* Question Text */}
-                <div className="mb-12 w-full px-6">
-                  <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">
-                    {quizMode === 'zh2vi' ? 'Dịch sang Tiếng Việt' : 'Dịch sang Tiếng Trung'}
-                  </p>
-                  <h3 className="text-4xl md:text-5xl font-extrabold text-primary leading-tight">
-                    {quizMode === 'zh2vi' ? quizSentence?.chinese : quizSentence?.originalText}
-                  </h3>
-                </div>
-
-                {quizStage === 'running' ? (
-                  <div className="flex flex-col items-center gap-6">
-                    <div className="relative w-32 h-32 flex items-center justify-center">
-                      <svg className="absolute inset-0 w-full h-full -rotate-90">
-                        <circle
-                          cx="64" cy="64" r="60"
-                          fill="transparent"
-                          stroke="#f1f5f9"
-                          strokeWidth="8"
-                        />
-                        <motion.circle
-                          cx="64" cy="64" r="60"
-                          fill="transparent"
-                          stroke="#f97316"
-                          strokeWidth="8"
-                          strokeDasharray={377}
-                          animate={{ strokeDashoffset: 377 * (1 - quizTimer / 15) }}
-                          transition={{ duration: 1, ease: "linear" }}
-                        />
-                      </svg>
-                      <span className="text-5xl font-black text-orange-500">{quizTimer}</span>
-                    </div>
-                    <p className="text-xl font-bold text-slate-500">
-                      {quizTimer > 0 ? (quizMode === 'zh2vi' ? 'Hãy nhớ nghĩa câu này!' : 'Dịch câu này sang tiếng Trung!') : 'Hết giờ! Đang hiển thị kết quả...'}
-                    </p>
-                  </div>
-                ) : (
-                  <motion.div 
-                    initial={{ opacity: 0, y: 20 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    className="space-y-6 w-full px-4"
-                  >
-                    <div className={`p-8 rounded-[2rem] border-2 ${quizMode === 'zh2vi' ? 'bg-indigo-50 border-indigo-100' : 'bg-emerald-50 border-emerald-100'}`}>
-                      <p className="text-xs font-bold text-primary uppercase tracking-widest mb-4">Đáp án chính xác</p>
-                      {quizMode === 'zh2vi' ? (
-                        <h3 className="text-3xl md:text-4xl font-bold text-slate-800 leading-tight">
-                          {quizSentence?.originalText}
-                        </h3>
-                      ) : (
-                        <>
-                          <h3 className="text-4xl md:text-5xl font-bold text-slate-800 mb-4">{quizSentence?.chinese}</h3>
-                          <p className="text-2xl text-slate-500 italic font-medium">{quizSentence?.pinyin}</p>
-                        </>
-                      )}
-                    </div>
-                    
-                    <div className="flex gap-4 max-w-md mx-auto w-full">
-                      <button 
-                        onClick={() => startQuiz()}
-                        className="flex-1 py-4 bg-primary text-white rounded-2xl font-bold text-lg shadow-[0_4px_0_#065f46] hover:bg-primary-dark active:translate-y-1 active:shadow-none transition-all"
-                      >
-                        Tiếp theo
-                      </button>
-                      <button 
-                        onClick={() => {
-                          setShowQuiz(false);
-                          setResult(quizSentence);
-                        }}
-                        className="px-6 py-4 bg-white text-slate-600 rounded-2xl font-bold border border-slate-200 hover:bg-slate-50 transition-colors"
-                      >
-                        Giải thích
-                      </button>
-                    </div>
-                  </motion.div>
-                )}
-              </div>
             </motion.div>
           ) : (
             <motion.div 
@@ -783,6 +709,12 @@ export default function App() {
                         className={`${v.type === 'grammar' ? 'bg-indigo-50 border-indigo-100' : 'bg-orange-50 border-orange-100'} border px-3 py-1.5 rounded-xl flex items-center gap-2 group hover:shadow-sm transition-all`}
                         title={v.type === 'grammar' ? 'Cấu trúc ngữ pháp' : 'Từ vựng'}
                       >
+                        <button 
+                          onClick={() => handleSpeak(v.word)}
+                          className={`${v.type === 'grammar' ? 'text-indigo-400 hover:text-indigo-600' : 'text-orange-400 hover:text-orange-600'} transition-colors`}
+                        >
+                          <Volume2 size={14} />
+                        </button>
                         <span className={`text-sm font-bold ${v.type === 'grammar' ? 'text-indigo-600' : 'text-orange-600'}`}>{v.word}</span>
                         <button 
                           onClick={async () => {
@@ -1037,7 +969,262 @@ export default function App() {
             )}
           </AnimatePresence>
         </div>
-      </main>
+      </div>
+    ) : (
+      /* Test Center View */
+        <div className="max-w-4xl mx-auto w-full">
+          {!testType ? (
+            /* Test Selection Screen */
+            <div className="space-y-8 py-10">
+              <div className="text-center mb-12">
+                <h2 className="text-4xl font-extrabold text-slate-800 mb-4 flex items-center justify-center gap-3">
+                  <Zap className="text-orange-500" size={40} /> Trung tâm Khảo thí
+                </h2>
+                <p className="text-slate-500 text-lg max-w-xl mx-auto">Chọn chế độ luyện tập phù hợp để củng cố kiến thức của bạn ngay hôm nay!</p>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                {/* Vocabulary Test Card */}
+                <motion.div 
+                  whileHover={{ y: -8 }}
+                  onClick={startVocabQuiz}
+                  className="bg-white p-8 rounded-[2.5rem] border-2 border-slate-100 shadow-xl shadow-slate-200/50 cursor-pointer group hover:border-orange-500/30 transition-all"
+                >
+                  <div className="w-16 h-16 bg-orange-50 rounded-2xl flex items-center justify-center mb-6 group-hover:scale-110 transition-transform">
+                    <Bookmark size={32} className="text-orange-500 fill-orange-500" />
+                  </div>
+                  <h3 className="text-2xl font-bold text-slate-800 mb-3">Kiểm tra Từ vựng</h3>
+                  <p className="text-slate-500 text-sm mb-6 leading-relaxed">Ôn tập các từ vựng và cấu trúc bạn đã lưu trong quá trình học. Thử thách trí nhớ với flashcards.</p>
+                  <div className="flex items-center gap-2 text-orange-500 font-bold group-hover:gap-4 transition-all">
+                    Bắt đầu ngay <ChevronRight size={18} />
+                  </div>
+                </motion.div>
+
+                {/* Grammar Test Card */}
+                <motion.div 
+                  whileHover={{ y: -8 }}
+                  onClick={() => startQuiz()}
+                  className="bg-white p-8 rounded-[2.5rem] border-2 border-slate-100 shadow-xl shadow-slate-200/50 cursor-pointer group hover:border-primary/30 transition-all"
+                >
+                  <div className="w-16 h-16 bg-emerald-50 rounded-2xl flex items-center justify-center mb-6 group-hover:scale-110 transition-transform">
+                    <Zap size={32} className="text-primary fill-primary" />
+                  </div>
+                  <h3 className="text-2xl font-bold text-slate-800 mb-3">Thử thách Ngôn ngữ</h3>
+                  <p className="text-slate-500 text-sm mb-6 leading-relaxed">Dịch câu trong 15 giây. Luyện tập phản xạ nhanh giữa Tiếng Việt và Tiếng Trung.</p>
+                  <div className="flex items-center gap-2 text-primary font-bold group-hover:gap-4 transition-all">
+                    Bắt đầu ngay <ChevronRight size={18} />
+                  </div>
+                </motion.div>
+              </div>
+
+              {savedSentences.length === 0 && vocabulary.length === 0 && (
+                <div className="bg-amber-50 border border-amber-200 p-6 rounded-3xl text-center">
+                  <p className="text-amber-700 font-bold">Bạn chưa có dữ liệu học tập!</p>
+                  <p className="text-amber-600/80 text-sm">Hãy ra trang "Bài học" và lưu một vài câu hoặc từ vựng để bắt đầu kiểm tra.</p>
+                </div>
+              )}
+            </div>
+          ) : (
+            /* Active Test Interface */
+            <div className="max-w-2xl mx-auto w-full py-6">
+              <button 
+                onClick={() => setTestType(null)}
+                className="mb-8 flex items-center gap-2 text-slate-400 hover:text-slate-600 font-bold transition-colors"
+              >
+                <ChevronRight size={18} className="rotate-180" /> Quay lại danh sách test
+              </button>
+
+              <AnimatePresence mode="wait">
+                {testType === 'grammar' ? (
+                  /* Grammar Quiz UI (existing logic but refocused) */
+                  <motion.div 
+                    key="grammar-quiz"
+                    initial={{ opacity: 0, scale: 0.95 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    exit={{ opacity: 0, scale: 0.95 }}
+                    className="sleek-card min-h-[500px] flex flex-col items-center justify-center text-center relative overflow-hidden bg-white"
+                  >
+                    {/* Question Section */}
+                    <div className="mb-12 w-full px-6">
+                      <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">
+                        {quizMode === 'zh2vi' ? 'Dịch sang Tiếng Việt' : 'Dịch sang Tiếng Trung'}
+                      </p>
+                      <h3 className="text-4xl md:text-5xl font-bold text-primary leading-tight flex items-center justify-center gap-4">
+                        {quizMode === 'zh2vi' ? quizSentence?.chinese : quizSentence?.originalText}
+                        {quizMode === 'zh2vi' && (
+                          <button 
+                            onClick={(e) => { e.stopPropagation(); handleSpeak(quizSentence?.chinese || ''); }}
+                            className="p-2 bg-indigo-50 text-indigo-500 rounded-full hover:bg-indigo-100 transition-colors"
+                          >
+                            <Volume2 size={24} />
+                          </button>
+                        )}
+                      </h3>
+                    </div>
+
+                    {quizStage === 'running' ? (
+                      <div className="flex flex-col items-center">
+                        <div className="relative w-32 h-32 mb-8 flex items-center justify-center">
+                          <svg className="absolute inset-0 w-full h-full -rotate-90">
+                            <circle 
+                              cx="64" cy="64" r="60" 
+                              className="stroke-slate-100 fill-none" 
+                              strokeWidth="8" 
+                            />
+                            <circle 
+                              cx="64" cy="64" r="60" 
+                              className="stroke-orange-500 fill-none transition-all duration-1000 ease-linear" 
+                              strokeWidth="8"
+                              strokeDasharray={`${2 * Math.PI * 60}`}
+                              strokeDashoffset={`${(2 * Math.PI * 60) * (1 - quizTimer / 15)}`}
+                            />
+                          </svg>
+                          <span className="text-5xl font-black text-orange-500">{quizTimer}</span>
+                        </div>
+                        <p className="text-xl font-bold text-slate-500">
+                          {quizTimer > 0 ? (quizMode === 'zh2vi' ? 'Hãy nhớ nghĩa câu này!' : 'Dịch câu này sang tiếng Trung!') : 'Hết giờ! Đang hiển thị kết quả...'}
+                        </p>
+                        <button 
+                          onClick={() => {
+                            setQuizTimer(0);
+                            setQuizStage('revealed');
+                          }}
+                          className="mt-8 px-8 py-3 bg-slate-100 text-slate-600 rounded-2xl font-bold hover:bg-slate-200 transition-all"
+                        >
+                          Hiện đáp án sớm
+                        </button>
+                      </div>
+                    ) : (
+                      <motion.div 
+                        initial={{ opacity: 0, y: 20 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        className="space-y-6 w-full px-6"
+                      >
+                        <div className={`p-8 rounded-[2rem] border-2 ${quizMode === 'zh2vi' ? 'bg-indigo-50 border-indigo-100' : 'bg-emerald-50 border-emerald-100'}`}>
+                          <p className="text-xs font-bold text-primary uppercase tracking-widest mb-4">Đáp án chính xác</p>
+                          {quizMode === 'zh2vi' ? (
+                            <h3 className="text-3xl md:text-4xl font-bold text-slate-800 leading-tight">
+                              {quizSentence?.originalText}
+                            </h3>
+                          ) : (
+                            <>
+                              <div className="flex items-center justify-center gap-3 mb-4">
+                                <h3 className="text-4xl md:text-5xl font-bold text-slate-800">{quizSentence?.chinese}</h3>
+                                <button 
+                                  onClick={() => handleSpeak(quizSentence?.chinese || '')}
+                                  className="p-2 bg-emerald-100 text-emerald-600 rounded-full hover:bg-emerald-200 transition-colors"
+                                >
+                                  <Volume2 size={24} />
+                                </button>
+                              </div>
+                              <p className="text-2xl text-slate-500 italic font-medium">{quizSentence?.pinyin}</p>
+                            </>
+                          )}
+                        </div>
+                        
+                        <div className="flex gap-4 max-w-md mx-auto w-full">
+                          <button 
+                            onClick={() => startQuiz()}
+                            className="flex-1 py-4 bg-primary text-white rounded-2xl font-bold text-lg shadow-[0_4px_0_#065f46] hover:bg-primary-dark active:translate-y-1 active:shadow-none transition-all"
+                          >
+                            Tiếp theo
+                          </button>
+                        </div>
+                      </motion.div>
+                    )}
+                  </motion.div>
+                ) : (
+                  /* Vocabulary Quiz UI */
+                  <motion.div 
+                    key="vocab-quiz"
+                    initial={{ opacity: 0, scale: 0.95 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    exit={{ opacity: 0, scale: 0.95 }}
+                    className="sleek-card min-h-[500px] flex flex-col items-center justify-center text-center bg-white"
+                  >
+                    <div className="mb-12 w-full px-6">
+                      <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-4">Bạn có nhớ từ này không?</p>
+                      <div className="flex items-center justify-center gap-4">
+                        <h3 className={`text-6xl md:text-8xl font-black ${quizWord?.type === 'grammar' ? 'text-indigo-600' : 'text-orange-600'}`}>
+                          {quizWord?.word}
+                        </h3>
+                        <button 
+                          onClick={() => handleSpeak(quizWord?.word || '')}
+                          className={`p-3 rounded-full transition-colors ${quizWord?.type === 'grammar' ? 'bg-indigo-50 text-indigo-500 hover:bg-indigo-100' : 'bg-orange-50 text-orange-500 hover:bg-orange-100'}`}
+                        >
+                          <Volume2 size={32} />
+                        </button>
+                      </div>
+                      <div className="mt-4">
+                        <span className={`px-4 py-1.5 rounded-full text-[10px] font-bold uppercase tracking-wider ${quizWord?.type === 'grammar' ? 'bg-indigo-100 text-indigo-700' : 'bg-orange-100 text-orange-700'}`}>
+                          {quizWord?.type === 'grammar' ? 'Cấu trúc Ngữ pháp' : 'Từ vựng'}
+                        </span>
+                      </div>
+                    </div>
+
+                    {quizStage === 'running' ? (
+                      <div className="space-y-12 w-full px-8">
+                        <div className="flex flex-col items-center">
+                          <button 
+                            onClick={() => {
+                              const sentence = savedSentences.find(s => s.id === quizWord?.sentenceId);
+                              if (sentence) {
+                                alert(`Gợi ý ngữ cảnh:\n${quizMode === 'zh2vi' ? sentence.originalText : sentence.chinese}`);
+                              } else {
+                                alert("Không tìm thấy ngữ cảnh câu ví dụ.");
+                              }
+                            }}
+                            className="bg-slate-50 text-slate-500 font-bold px-6 py-2 rounded-xl border border-slate-100 hover:bg-slate-100 transition-all flex items-center gap-2 mb-8"
+                          >
+                            <Lightbulb size={18} className="text-amber-500" /> Xem gợi ý ngữ cảnh
+                          </button>
+                          
+                          <button 
+                            onClick={() => setQuizStage('revealed')}
+                            className="w-full max-w-md py-6 bg-slate-800 text-white rounded-3xl font-black text-2xl shadow-xl shadow-slate-200 hover:bg-slate-900 transition-all active:scale-[0.98]"
+                          >
+                            XEM ĐÁP ÁN
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <motion.div 
+                        initial={{ opacity: 0, y: 20 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        className="space-y-8 w-full px-6"
+                      >
+                        <div className={`p-8 rounded-[3rem] border-2 ${quizWord?.type === 'grammar' ? 'bg-indigo-50 border-indigo-100' : 'bg-orange-50 border-orange-100'}`}>
+                          <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-6">Ngữ cảnh & Ý nghĩa</p>
+                          {savedSentences.find(s => s.id === quizWord?.sentenceId) ? (
+                            <div className="space-y-4">
+                              <p className="text-2xl font-bold text-slate-800 leading-relaxed">
+                                {savedSentences.find(s => s.id === quizWord?.sentenceId)?.chinese}
+                              </p>
+                              <p className="text-xl text-slate-500 italic">
+                                {savedSentences.find(s => s.id === quizWord?.sentenceId)?.originalText}
+                              </p>
+                            </div>
+                          ) : (
+                            <p className="text-slate-500 italic">Dữ liệu câu ví dụ đã bị xóa hoặc không tồn tại.</p>
+                          )}
+                        </div>
+
+                        <button 
+                          onClick={startVocabQuiz}
+                          className="w-full max-w-md py-5 bg-primary text-white rounded-[2rem] font-bold text-xl shadow-lg hover:bg-primary-dark transition-all"
+                        >
+                          Từ tiếp theo
+                        </button>
+                      </motion.div>
+                    )}
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
+          )}
+        </div>
+      )}
+    </main>
 
       {/* Footer Status */}
       <footer className="h-12 bg-white border-t border-sleek-border px-4 md:px-8 flex items-center justify-between shrink-0 text-[10px] md:text-[11px] text-sleek-muted font-medium uppercase tracking-widest hidden lg:flex">
