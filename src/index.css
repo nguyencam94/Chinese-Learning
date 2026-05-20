@@ -1,3 +1,4 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap');
 @import "tailwindcss";
 
 @theme {
@@ -31,15 +32,23 @@ body {
 }
 
 .markdown-body {
-  @apply space-y-6 leading-relaxed;
+  @apply space-y-4 leading-relaxed whitespace-pre-wrap;
 }
 
 .markdown-body h1, .markdown-body h2, .markdown-body h3 {
-  @apply font-bold text-sleek-text mt-6 mb-2;
+  @apply font-bold text-sleek-text mt-4 mb-2;
 }
 
 .markdown-body p {
-  @apply text-sleek-description text-lg;
+  @apply text-sleek-description text-base md:text-lg;
+}
+
+.markdown-body ul, .markdown-body ol {
+  @apply pl-6 space-y-2 text-sleek-description text-base md:text-lg;
+}
+
+.markdown-body li {
+  @apply list-disc;
 }
 
 .grammar-step {
@@ -49,3 +58,23 @@ body {
 .step-number {
   @apply shrink-0 w-10 h-10 rounded-full flex items-center justify-center font-bold text-sm;
 }
+
+@keyframes border-blink-red {
+  0%, 100% {
+    border-color: #f43f5e; /* rose-500 */
+    background-color: #fff1f2; /* rose-50 */
+    color: #be123c; /* rose-700 */
+    box-shadow: 0 0 0 4px rgba(244, 63, 94, 0.3);
+  }
+  50% {
+    border-color: #fecdd3; /* rose-200 */
+    background-color: #ffffff;
+    color: #475569;
+    box-shadow: 0 0 0 0 rgba(244, 63, 94, 0);
+  }
+}
+
+.animate-blink-red {
+  animation: border-blink-red 1s infinite ease-in-out;
+}
+

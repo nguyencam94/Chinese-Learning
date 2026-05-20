@@ -16,11 +16,18 @@ const getGenAI = () => {
   return genAI;
 };
 
+export interface Variation {
+  chinese: string;
+  pinyin: string;
+  meaning: string;
+}
+
 export interface TranslationResult {
   chinese: string;
   pinyin: string;
   meaning: string;
   grammarExplanation: string;
+  variations?: Variation[];
 }
 
 export const translateAndExplain = async (text: string): Promise<TranslationResult> => {
@@ -30,8 +37,17 @@ export const translateAndExplain = async (text: string): Promise<TranslationResu
   }
   const response = await ai.models.generateContent({
     model: "gemini-3-flash-preview",
-    contents: `Translate the following sentence into Chinese (Simplified). 
-    Provide the Chinese characters, Pinyin, English meaning, and a DETAILED grammar explanation in Vietnamese (since I am a Vietnamese speaker).
+    contents: `Translate the following Vietnamese sentence into Chinese (Simplified). 
+    Provide the Chinese characters, Pinyin, and a detailed explanation in Vietnamese.
+    
+    Additionally, provide 3 variations of the same sentence (e.g., negative, question, or adding emphasis) with their pinyin and meaning.
+    
+    IMPORTANT for "grammarExplanation":
+    - Break down each word or grammar structure into its own distinct bullet point.
+    - DO NOT lump everything into one paragraph.
+    - Each bullet point MUST be followed by a double line break for maximum readability.
+    - Use Markdown for bolding key terms.
+    - Explain the usage and role of each component in the sentence.
     
     Sentence: "${text}"`,
     config: {
@@ -41,10 +57,23 @@ export const translateAndExplain = async (text: string): Promise<TranslationResu
         properties: {
           chinese: { type: Type.STRING, description: "The Chinese characters (Simplified)" },
           pinyin: { type: Type.STRING, description: "The Pinyin pronunciation" },
-          meaning: { type: Type.STRING, description: "The English meaning of the sentence" },
-          grammarExplanation: { type: Type.STRING, description: "A detailed grammar explanation in Vietnamese (Markdown format)" },
+          meaning: { type: Type.STRING, description: "The meaning in Vietnamese" },
+          grammarExplanation: { type: Type.STRING, description: "A detailed grammar and vocabulary breakdown in Vietnamese (Markdown format, one point per line)" },
+          variations: {
+            type: Type.ARRAY,
+            items: {
+              type: Type.OBJECT,
+              properties: {
+                chinese: { type: Type.STRING },
+                pinyin: { type: Type.STRING },
+                meaning: { type: Type.STRING },
+              },
+              required: ["chinese", "pinyin", "meaning"],
+            },
+            description: "3 variations of the original sentence",
+          },
         },
-        required: ["chinese", "pinyin", "meaning", "grammarExplanation"],
+        required: ["chinese", "pinyin", "meaning", "grammarExplanation", "variations"],
       },
     },
   });

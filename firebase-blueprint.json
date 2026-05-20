@@ -36,9 +36,22 @@
         "grammarExplanation": { "type": "string", "description": "Markdown explanation of the grammar" },
         "userId": { "type": "string", "description": "The ID of the user who saved the sentence" },
         "categoryId": { "type": "string", "description": "The ID of the category this sentence belongs to" },
+        "sectionId": { "type": "string", "description": "The ID of the section this sentence belongs to" },
         "createdAt": { "type": "string", "format": "date-time", "description": "Timestamp of when the sentence was saved" }
       },
       "required": ["originalText", "chinese", "pinyin", "meaning", "grammarExplanation", "userId", "createdAt"]
+    },
+    "Section": {
+      "title": "Section",
+      "description": "A subdivision within a category (e.g., a conversation or paragraph)",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string", "description": "The name of the section" },
+        "categoryId": { "type": "string", "description": "The ID of the parent category" },
+        "userId": { "type": "string", "description": "The ID of the user who owns the section" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Timestamp of creation" }
+      },
+      "required": ["name", "categoryId", "userId", "createdAt"]
     }
   },
   "firestore": {
@@ -49,6 +62,10 @@
     "/categories/{categoryId}": {
       "schema": "Category",
       "description": "Collection of user-defined categories"
+    },
+    "/sections/{sectionId}": {
+      "schema": "Section",
+      "description": "Collection of user-defined sections within categories"
     },
     "/vocabulary/{wordId}": {
       "schema": "Vocabulary",

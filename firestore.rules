@@ -34,20 +34,30 @@ service cloud.firestore {
     // Saved Sentences validation
     function isValidSavedSentence(data) {
       return data.keys().hasAll(['originalText', 'chinese', 'pinyin', 'meaning', 'grammarExplanation', 'userId', 'createdAt'])
-        && (data.keys().size() == 7 || (data.keys().size() == 8 && data.keys().hasAll(['categoryId'])))
+        && (data.keys().size() >= 7 && data.keys().size() <= 9)
         && data.originalText is string && data.originalText.size() <= 1000
         && data.chinese is string && data.chinese.size() <= 500
         && data.pinyin is string && data.pinyin.size() <= 500
         && data.meaning is string && data.meaning.size() <= 1000
         && data.grammarExplanation is string && data.grammarExplanation.size() <= 10000
         && data.userId is string && data.userId == request.auth.uid
-        && (data.get('categoryId', '') == '' || (data.categoryId is string && isValidId(data.categoryId)));
+        && (data.get('categoryId', '') == '' || (data.categoryId is string && isValidId(data.categoryId)))
+        && (data.get('sectionId', '') == '' || (data.sectionId is string && isValidId(data.sectionId)));
     }
 
     function isValidCategory(data) {
       return data.keys().hasAll(['name', 'userId', 'createdAt'])
         && data.keys().size() == 3
         && data.name is string && data.name.size() <= 100
+        && data.userId is string && data.userId == request.auth.uid
+        && data.createdAt == request.time;
+    }
+
+    function isValidSection(data) {
+      return data.keys().hasAll(['name', 'categoryId', 'userId', 'createdAt'])
+        && data.keys().size() == 4
+        && data.name is string && data.name.size() <= 100
+        && data.categoryId is string && isValidId(data.categoryId)
         && data.userId is string && data.userId == request.auth.uid
         && data.createdAt == request.time;
     }
@@ -69,7 +79,7 @@ service cloud.firestore {
                     && incoming().createdAt == existing().createdAt
                     && incoming().userId == existing().userId
                     && incoming().originalText == existing().originalText
-                    && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['categoryId']);
+                    && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['categoryId', 'sectionId', 'grammarExplanation']);
       allow get: if isOwner(existing().userId);
       allow list: if isOwner(resource.data.userId);
       allow delete: if isOwner(existing().userId);
@@ -78,6 +88,14 @@ service cloud.firestore {
     match /categories/{categoryId} {
       allow create: if isVerified() && isValidCategory(incoming());
       allow update: if isVerified() && isOwner(existing().userId) && isValidCategory(incoming());
+      allow get: if isOwner(existing().userId);
+      allow list: if isOwner(resource.data.userId);
+      allow delete: if isOwner(existing().userId);
+    }
+
+    match /sections/{sectionId} {
+      allow create: if isVerified() && isValidSection(incoming());
+      allow update: if isVerified() && isOwner(existing().userId) && isValidSection(incoming());
       allow get: if isOwner(existing().userId);
       allow list: if isOwner(resource.data.userId);
       allow delete: if isOwner(existing().userId);
