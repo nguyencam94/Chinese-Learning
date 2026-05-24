@@ -212,6 +212,7 @@ export default function App() {
   const [newSectionName, setNewSectionName] = useState('');
   const [isCreatingSection, setIsCreatingSection] = useState(false);
 
+  const [isMobileCategoryOpen, setIsMobileCategoryOpen] = useState(false);
   const [selectedFilterCategory, setSelectedFilterCategory] = useState<string>('all');
   const [selectedFilterSection, setSelectedFilterSection] = useState<string>('all');
   const [learnSelectedCategory, setLearnSelectedCategory] = useState<string>('all');
@@ -2242,6 +2243,165 @@ export default function App() {
               </div>
             </motion.div>
           </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Mobile Floating Category Selector */}
+      {activeView === 'home' && (
+        <div className="lg:hidden fixed bottom-20 right-4 z-40">
+          <motion.button
+            whileTap={{ scale: 0.92 }}
+            onClick={() => setIsMobileCategoryOpen(true)}
+            className="flex items-center gap-2 px-4 py-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-full shadow-lg border border-emerald-500/30 font-black text-xs uppercase tracking-wider cursor-pointer"
+          >
+            <List size={16} />
+            <span>Chủ đề</span>
+          </motion.button>
+        </div>
+      )}
+
+      {/* Mobile Sliding Category Drawer */}
+      <AnimatePresence>
+        {activeView === 'home' && isMobileCategoryOpen && (
+          <>
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setIsMobileCategoryOpen(false)}
+              className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs z-50 lg:hidden"
+            />
+            
+            <motion.div
+              initial={{ y: "100%" }}
+              animate={{ y: 0 }}
+              exit={{ y: "100%" }}
+              transition={{ type: "spring", damping: 25, stiffness: 220 }}
+              className="fixed bottom-0 left-0 right-0 max-h-[85vh] bg-white rounded-t-[2.5rem] shadow-2xl z-[55] lg:hidden flex flex-col overflow-hidden pb-10"
+            >
+              {/* Drag Handle Decoration */}
+              <div className="w-12 h-1.5 bg-slate-200 rounded-full mx-auto my-3" />
+              
+              <div className="px-6 pb-4 border-b border-slate-50 flex items-center justify-between">
+                <span className="text-xs font-black text-slate-800 uppercase tracking-widest flex items-center gap-2">
+                  <Library size={16} className="text-emerald-500" />
+                  Danh mục chủ đề
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setIsMobileCategoryOpen(false)}
+                  className="w-8 h-8 rounded-full bg-slate-100 flex items-center justify-center text-slate-400 hover:text-slate-600 font-bold text-sm cursor-pointer"
+                >
+                  ✕
+                </button>
+              </div>
+              
+              <div className="flex-1 overflow-y-auto px-6 py-4 space-y-2.5 custom-scrollbar">
+                {/* Tất cả */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSelectedFilterCategory('all');
+                    setSelectedFilterSection('all');
+                    setIsMobileCategoryOpen(false);
+                  }}
+                  className={`w-full text-left p-4 rounded-2xl border transition-all duration-150 flex items-center justify-between cursor-pointer ${
+                    selectedFilterCategory === 'all'
+                      ? 'bg-emerald-50/50 border-emerald-500 shadow-sm text-emerald-950 font-extrabold'
+                      : 'bg-slate-50/50 border-slate-100/70 hover:bg-slate-50 text-slate-700'
+                  }`}
+                >
+                  <div className="flex items-center gap-3">
+                    <span className="text-xs uppercase tracking-widest font-black text-slate-400">#</span>
+                    <span className="text-sm font-bold">Tất cả chủ đề</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-[11px] font-black bg-slate-100 px-2.5 py-1 rounded-lg text-slate-500">
+                      {savedSentences.length}
+                    </span>
+                    {selectedFilterCategory === 'all' && (
+                      <Check size={16} className="text-emerald-600" />
+                    )}
+                  </div>
+                </button>
+                
+                {/* Dynamically mapped Categories */}
+                {categories.map((c) => {
+                  const count = savedSentences.filter(s => s.categoryId === c.id).length;
+                  const isSelected = selectedFilterCategory === c.id;
+                  return (
+                    <button
+                      type="button"
+                      key={`mobile-filter-cat-${c.id}`}
+                      onClick={() => {
+                        setSelectedFilterCategory(c.id);
+                        setSelectedFilterSection('all');
+                        setIsMobileCategoryOpen(false);
+                      }}
+                      className={`w-full text-left p-4 rounded-2xl border transition-all duration-150 flex items-center justify-between cursor-pointer ${
+                        isSelected
+                          ? 'bg-emerald-50/50 border-emerald-500 shadow-sm text-emerald-950 font-extrabold'
+                          : 'bg-slate-50/50 border-slate-100/70 hover:bg-slate-50 text-slate-700'
+                      }`}
+                    >
+                      <div className="flex items-center gap-3">
+                        <span className="text-xs uppercase tracking-widest font-black text-emerald-500">#</span>
+                        <span className="text-sm font-bold">{c.name}</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-[11px] font-black bg-slate-100 px-2.5 py-1 rounded-lg text-slate-500">
+                          {count}
+                        </span>
+                        {isSelected && (
+                          <Check size={16} className="text-emerald-600" />
+                        )}
+                      </div>
+                    </button>
+                  );
+                })}
+                
+                {/* Collapsible Section list inside Drawer if a Specific Category is chosen */}
+                {selectedFilterCategory !== 'all' && (
+                  <div className="mt-6 pt-4 border-t border-slate-100">
+                    <p className="text-[10px] font-black text-indigo-500 uppercase tracking-widest mb-3">Đoạn / Bài học trong chủ đề</p>
+                    <div className="grid grid-cols-2 gap-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSelectedFilterSection('all');
+                          setIsMobileCategoryOpen(false);
+                        }}
+                        className={`p-3.5 rounded-2xl border text-xs font-bold text-center transition-all cursor-pointer ${
+                          selectedFilterSection === 'all'
+                            ? 'border-indigo-500 bg-indigo-50/40 text-indigo-950 font-extrabold'
+                            : 'border-slate-100 bg-slate-50 hover:bg-slate-100 text-slate-600'
+                        }`}
+                      >
+                        Tất cả đoạn
+                      </button>
+                      {sections.filter(s => s.categoryId === selectedFilterCategory).map(s => (
+                        <button
+                          type="button"
+                          key={`mobile-filter-sec-${s.id}`}
+                          onClick={() => {
+                            setSelectedFilterSection(s.id);
+                            setIsMobileCategoryOpen(false);
+                          }}
+                          className={`p-3.5 rounded-2xl border text-xs font-bold text-center transition-all truncate cursor-pointer ${
+                            selectedFilterSection === s.id
+                              ? 'border-indigo-500 bg-indigo-50/40 text-indigo-950 font-extrabold'
+                              : 'border-slate-100 bg-slate-50 hover:bg-slate-100 text-slate-600'
+                          }`}
+                        >
+                          {s.name}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </motion.div>
+          </>
         )}
       </AnimatePresence>
     </div>
