@@ -34,7 +34,7 @@ service cloud.firestore {
     // Saved Sentences validation
     function isValidSavedSentence(data) {
       return data.keys().hasAll(['originalText', 'chinese', 'pinyin', 'meaning', 'grammarExplanation', 'userId', 'createdAt'])
-        && (data.keys().size() >= 7 && data.keys().size() <= 9)
+        && (data.keys().size() >= 7 && data.keys().size() <= 15)
         && data.originalText is string && data.originalText.size() <= 1000
         && data.chinese is string && data.chinese.size() <= 500
         && data.pinyin is string && data.pinyin.size() <= 500
@@ -42,15 +42,17 @@ service cloud.firestore {
         && data.grammarExplanation is string && data.grammarExplanation.size() <= 10000
         && data.userId is string && data.userId == request.auth.uid
         && (data.get('categoryId', '') == '' || (data.categoryId is string && isValidId(data.categoryId)))
-        && (data.get('sectionId', '') == '' || (data.sectionId is string && isValidId(data.sectionId)));
+        && (data.get('sectionId', '') == '' || (data.sectionId is string && isValidId(data.sectionId)))
+        && (data.get('note', '') == '' || (data.note is string && data.note.size() <= 2000))
+        && (data.get('difficulty', 'basic') is string && data.get('difficulty', 'basic') in ['basic', 'easy', 'medium', 'hard'])
+        && (data.get('variations', []) is list);
     }
 
     function isValidCategory(data) {
       return data.keys().hasAll(['name', 'userId', 'createdAt'])
         && data.keys().size() == 3
         && data.name is string && data.name.size() <= 100
-        && data.userId is string && data.userId == request.auth.uid
-        && data.createdAt == request.time;
+        && data.userId is string && data.userId == request.auth.uid;
     }
 
     function isValidSection(data) {
@@ -58,8 +60,7 @@ service cloud.firestore {
         && data.keys().size() == 4
         && data.name is string && data.name.size() <= 100
         && data.categoryId is string && isValidId(data.categoryId)
-        && data.userId is string && data.userId == request.auth.uid
-        && data.createdAt == request.time;
+        && data.userId is string && data.userId == request.auth.uid;
     }
 
     function isValidVocabulary(data) {
@@ -68,8 +69,7 @@ service cloud.firestore {
         && data.word is string && data.word.size() <= 100
         && data.type is string && (data.type == 'word' || data.type == 'grammar')
         && data.sentenceId is string && isValidId(data.sentenceId)
-        && data.userId is string && data.userId == request.auth.uid
-        && data.createdAt == request.time;
+        && data.userId is string && data.userId == request.auth.uid;
     }
 
     match /saved_sentences/{sentenceId} {
@@ -78,31 +78,46 @@ service cloud.firestore {
                     && isValidSavedSentence(incoming())
                     && incoming().createdAt == existing().createdAt
                     && incoming().userId == existing().userId
-                    && incoming().originalText == existing().originalText
-                    && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['categoryId', 'sectionId', 'grammarExplanation']);
+                    && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+                      'categoryId', 'sectionId', 'grammarExplanation', 'note', 'difficulty',
+                      'chinese', 'pinyin', 'meaning', 'originalText', 'variations'
+                    ]);
       allow get: if isOwner(existing().userId);
       allow list: if isOwner(resource.data.userId);
       allow delete: if isOwner(existing().userId);
     }
 
     match /categories/{categoryId} {
-      allow create: if isVerified() && isValidCategory(incoming());
-      allow update: if isVerified() && isOwner(existing().userId) && isValidCategory(incoming());
+      allow create: if isVerified() && isValidCategory(incoming()) && incoming().createdAt == request.time;
+      allow update: if isVerified() && isOwner(existing().userId) 
+                    && isValidCategory(incoming()) 
+                    && incoming().createdAt == existing().createdAt
+                    && incoming().userId == existing().userId
+                    && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name']);
       allow get: if isOwner(existing().userId);
       allow list: if isOwner(resource.data.userId);
       allow delete: if isOwner(existing().userId);
     }
 
     match /sections/{sectionId} {
-      allow create: if isVerified() && isValidSection(incoming());
-      allow update: if isVerified() && isOwner(existing().userId) && isValidSection(incoming());
+      allow create: if isVerified() && isValidSection(incoming()) && incoming().createdAt == request.time;
+      allow update: if isVerified() && isOwner(existing().userId) 
+                    && isValidSection(incoming()) 
+                    && incoming().createdAt == existing().createdAt
+                    && incoming().userId == existing().userId
+                    && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name', 'categoryId']);
       allow get: if isOwner(existing().userId);
       allow list: if isOwner(resource.data.userId);
       allow delete: if isOwner(existing().userId);
     }
 
     match /vocabulary/{wordId} {
-      allow create: if isVerified() && isValidVocabulary(incoming());
+      allow create: if isVerified() && isValidVocabulary(incoming()) && incoming().createdAt == request.time;
+      allow update: if isVerified() && isOwner(existing().userId)
+                    && isValidVocabulary(incoming())
+                    && incoming().createdAt == existing().createdAt
+                    && incoming().userId == existing().userId
+                    && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['word', 'type', 'sentenceId']);
       allow get: if isOwner(existing().userId);
       allow list: if isOwner(resource.data.userId);
       allow delete: if isOwner(existing().userId);

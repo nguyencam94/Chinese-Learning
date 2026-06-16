@@ -78,6 +78,8 @@ interface SavedSentence extends TranslationResult {
   categoryId?: string;
   sectionId?: string;
   createdAt: any;
+  note?: string;
+  difficulty?: 'basic' | 'easy' | 'medium' | 'hard';
 }
 
 const getCategoryTheme = (categoryId?: string, categoriesList: Category[] = []) => {
@@ -144,6 +146,16 @@ const getCategoryTheme = (categoryId?: string, categoriesList: Category[] = []) 
   return themes[index % themes.length];
 };
 
+const getDifficultyTranslation = (difficulty?: string) => {
+  switch (difficulty) {
+    case 'basic': return { label: 'Cơ bản', color: 'bg-emerald-50 text-emerald-800 border-emerald-200/60' };
+    case 'easy': return { label: 'Dễ', color: 'bg-sky-50 text-sky-800 border-sky-200/60' };
+    case 'medium': return { label: 'Trung bình', color: 'bg-amber-50 text-amber-800 border-amber-200/60' };
+    case 'hard': return { label: 'Khó', color: 'bg-rose-50 text-rose-800 border-rose-200/60' };
+    default: return { label: 'Cơ bản', color: 'bg-slate-100 text-slate-800 border-slate-200/60' };
+  }
+};
+
 export default function App() {
   const [inputText, setInputText] = useState('');
   const [result, setResult] = useState<TranslationResult | null>(null);
@@ -171,10 +183,35 @@ export default function App() {
   const [focusedSlotIndex, setFocusedSlotIndex] = useState<number | null>(null);
   const [wordOrderResultState, setWordOrderResultState] = useState<'playing' | 'correct' | 'incorrect'>('playing');
   const [wordOrderSelectedCategory, setWordOrderSelectedCategory] = useState<string>('all');
+  const [grammarSelectedCategory, setGrammarSelectedCategory] = useState<string>('all');
+  const [vocabSelectedCategory, setVocabSelectedCategory] = useState<string>('all');
+  const [wordOrderSelectedDifficulty, setWordOrderSelectedDifficulty] = useState<string>('all');
+  const [grammarSelectedDifficulty, setGrammarSelectedDifficulty] = useState<string>('all');
+  const [vocabSelectedDifficulty, setVocabSelectedDifficulty] = useState<string>('all');
   const [expandedSentence, setExpandedSentence] = useState<string | null>(null);
   const [isSpeaking, setIsSpeaking] = useState(false);
+  const [speakSlowGlobal, setSpeakSlowGlobal] = useState(false);
   const [isEditingExplanation, setIsEditingExplanation] = useState(false);
   const [editableExplanation, setEditableExplanation] = useState('');
+  const [noteText, setNoteText] = useState('');
+  const [isEditingNote, setIsEditingNote] = useState(false);
+  
+  // Main sentence editing states
+  const [isEditingMainSentence, setIsEditingMainSentence] = useState(false);
+  const [editMainChinese, setEditMainChinese] = useState('');
+  const [editMainPinyin, setEditMainPinyin] = useState('');
+  const [editMainMeaning, setEditMainMeaning] = useState('');
+  const [editMainOriginal, setEditMainOriginal] = useState('');
+
+  // Variations editing states
+  const [isAddingVariation, setIsAddingVariation] = useState(false);
+  const [newVarChinese, setNewVarChinese] = useState('');
+  const [newVarPinyin, setNewVarPinyin] = useState('');
+  const [newVarMeaning, setNewVarMeaning] = useState('');
+  const [editingVarIdx, setEditingVarIdx] = useState<number | null>(null);
+  const [editVarChinese, setEditVarChinese] = useState('');
+  const [editVarPinyin, setEditVarPinyin] = useState('');
+  const [editVarMeaning, setEditVarMeaning] = useState('');
   
   // Modal state
   const [confirmModal, setConfirmModal] = useState<{
@@ -216,11 +253,24 @@ export default function App() {
   const [selectedFilterCategory, setSelectedFilterCategory] = useState<string>('all');
   const [selectedFilterSection, setSelectedFilterSection] = useState<string>('all');
   const [learnSelectedCategory, setLearnSelectedCategory] = useState<string>('all');
+  const [learnSelectedDifficulty, setLearnSelectedDifficulty] = useState<string>('all');
+  const [homeSelectedDifficulty, setHomeSelectedDifficulty] = useState<string>('all');
+  const [inputDifficulty, setInputDifficulty] = useState<'basic' | 'easy' | 'medium' | 'hard'>('basic');
   const [currentSentenceCategoryId, setCurrentSentenceCategoryId] = useState<string>('');
   const [currentSentenceSectionId, setCurrentSentenceSectionId] = useState<string>('');
+  
+  const [vocabSearchQuery, setVocabSearchQuery] = useState('');
+  const [vocabFilterType, setVocabFilterType] = useState<'all' | 'word' | 'grammar'>('all');
+  const [expandedVocabId, setExpandedVocabId] = useState<string | null>(null);
 
   const [selectedText, setSelectedText] = useState('');
   const [selectionRange, setSelectionRange] = useState<{ top: number, left: number } | null>(null);
+  const [saveNotification, setSaveNotification] = useState<{
+    show: boolean;
+    text: string;
+    type: 'word' | 'grammar';
+    isDuplicate: boolean;
+  } | null>(null);
 
   const handleSelection = (e: React.MouseEvent) => {
     const selection = window.getSelection();
@@ -247,6 +297,12 @@ export default function App() {
       // Check if already exists to avoid duplicates with same type
       const existing = vocabulary.find(v => v.word === selectedText && v.type === type);
       if (existing) {
+        setSaveNotification({
+          show: true,
+          text: selectedText,
+          type: type,
+          isDuplicate: true
+        });
         setSelectedText('');
         setSelectionRange(null);
         window.getSelection()?.removeAllRanges();
@@ -264,10 +320,11 @@ export default function App() {
           userId: user.uid,
           categoryId: currentSentenceCategoryId || '',
           variations: result.variations || [],
+          difficulty: inputDifficulty,
           createdAt: serverTimestamp()
         });
         sentenceId = docRef.id;
-        setResult({ ...result, id: sentenceId, originalText: inputText } as SavedSentence);
+        setResult({ ...result, id: sentenceId, originalText: inputText, difficulty: inputDifficulty } as SavedSentence);
       }
 
       await addDoc(collection(db, 'vocabulary'), {
@@ -277,6 +334,14 @@ export default function App() {
         sentenceId: sentenceId,
         createdAt: serverTimestamp()
       });
+
+      setSaveNotification({
+        show: true,
+        text: selectedText,
+        type: type,
+        isDuplicate: false
+      });
+
       setSelectedText('');
       setSelectionRange(null);
       window.getSelection()?.removeAllRanges();
@@ -285,11 +350,19 @@ export default function App() {
     }
   };
 
-  const renderHighlightedChinese = (text: string) => {
+  const renderHighlightedChinese = (text: string, sentenceId?: string) => {
+    if (!text) return '';
     if (!vocabulary || vocabulary.length === 0) return text;
     
+    // Filter to only vocab for this sentence if sentenceId is provided
+    const relevantVocab = sentenceId 
+      ? vocabulary.filter(v => v.sentenceId === sentenceId)
+      : [];
+      
+    if (relevantVocab.length === 0) return text;
+    
     // Sort by length descending to handle overlapping highlights (longest first)
-    const sortedVocab = [...vocabulary].sort((a, b) => b.word.length - a.word.length);
+    const sortedVocab = [...relevantVocab].sort((a, b) => b.word.length - a.word.length);
     
     // We only take unique words per type for replacement logic to avoid double-processing same string
     // But since different types might have same word (unlikely but possible), we just map it
@@ -325,13 +398,22 @@ export default function App() {
     return parts;
   };
 
-  const startQuiz = (mode: 'vi2zh' | 'zh2vi' = quizMode) => {
-    const pool = savedSentences.length > 0 ? savedSentences : [];
+  const startQuiz = (mode: 'vi2zh' | 'zh2vi' = quizMode, sentence?: SavedSentence) => {
+    let pool = savedSentences;
+    if (!sentence) {
+      if (grammarSelectedCategory !== 'all') {
+        pool = pool.filter(s => s.categoryId === grammarSelectedCategory);
+      }
+      if (grammarSelectedDifficulty !== 'all') {
+        pool = pool.filter(s => (s.difficulty || 'basic') === grammarSelectedDifficulty);
+      }
+    }
+    
     if (pool.length === 0) {
-      setError("Bạn cần lưu ít nhất 1 câu vào sổ tay để làm bài test!");
+      setError("Bạn chưa lưu câu nào thuộc chủ đề hoặc mức độ khó đã chọn để làm bài test!");
       return;
     }
-    const random = pool[Math.floor(Math.random() * pool.length)];
+    const random = sentence || pool[Math.floor(Math.random() * pool.length)];
     setQuizMode(mode);
     setQuizSentence(random);
     setQuizTimer(15);
@@ -342,11 +424,22 @@ export default function App() {
   };
 
   const startVocabQuiz = () => {
-    if (vocabulary.length === 0) {
-      setError("Bạn cần lưu ít nhất 1 từ vựng trong sổ tay để làm bài test!");
+    let pool = vocabulary;
+    if (vocabSelectedCategory !== 'all' || vocabSelectedDifficulty !== 'all') {
+      pool = vocabulary.filter(v => {
+        const sentence = savedSentences.find(s => s.id === v.sentenceId);
+        if (!sentence) return false;
+        const matchesCategory = vocabSelectedCategory === 'all' || sentence.categoryId === vocabSelectedCategory;
+        const matchesDiff = vocabSelectedDifficulty === 'all' || (sentence.difficulty || 'basic') === vocabSelectedDifficulty;
+        return matchesCategory && matchesDiff;
+      });
+    }
+
+    if (pool.length === 0) {
+      setError("Bạn chưa lưu từ vựng nào thuộc chủ đề hoặc mức độ khó đã chọn để ôn tập!");
       return;
     }
-    const random = vocabulary[Math.floor(Math.random() * vocabulary.length)];
+    const random = pool[Math.floor(Math.random() * pool.length)];
     setQuizWord(random);
     setQuizTimer(15);
     setQuizStage('running');
@@ -363,9 +456,17 @@ export default function App() {
     
     // Pick specific or random sentence based on category filter
     let pool = savedSentences;
-    if (!sentence && wordOrderSelectedCategory !== 'all') {
-      const filtered = savedSentences.filter(s => s.categoryId === wordOrderSelectedCategory);
-      if (filtered.length > 0) {
+    if (!sentence) {
+      if (wordOrderSelectedCategory !== 'all' || wordOrderSelectedDifficulty !== 'all') {
+        const filtered = savedSentences.filter(s => {
+          const matchesCategory = wordOrderSelectedCategory === 'all' || s.categoryId === wordOrderSelectedCategory;
+          const matchesDiff = wordOrderSelectedDifficulty === 'all' || (s.difficulty || 'basic') === wordOrderSelectedDifficulty;
+          return matchesCategory && matchesDiff;
+        });
+        if (filtered.length === 0) {
+          setError("Chủ đề hoặc mức độ khó đã chọn chưa có câu nào được lưu để sắp xếp trật tự từ!");
+          return;
+        }
         pool = filtered;
       }
     }
@@ -472,23 +573,27 @@ export default function App() {
     setCurrentSentenceCategoryId(nextSentence.categoryId || '');
   };
 
-  const handleSpeak = (text: string) => {
-    if (!('speechSynthesis' in window)) {
-      setError("Trình duyệt của bạn không hỗ trợ tính năng phát âm.");
-      return;
-    }
-
-    window.speechSynthesis.cancel();
-
-    const utterance = new SpeechSynthesisUtterance(text);
-    utterance.lang = 'zh-CN';
-    
-    utterance.onstart = () => setIsSpeaking(true);
-    utterance.onend = () => setIsSpeaking(false);
-    utterance.onerror = () => setIsSpeaking(false);
-
-    window.speechSynthesis.speak(utterance);
-  };
+   const handleSpeak = (text: string, forceSlow?: boolean) => {
+     if (!('speechSynthesis' in window)) {
+       setError("Trình duyệt của bạn không hỗ trợ tính năng phát âm.");
+       return;
+     }
+ 
+     window.speechSynthesis.cancel();
+ 
+     const utterance = new SpeechSynthesisUtterance(text);
+     utterance.lang = 'zh-CN';
+     
+     // Set speech rate: normal is 1.0, slow is 0.5
+     const isSlow = forceSlow !== undefined ? forceSlow : speakSlowGlobal;
+     utterance.rate = isSlow ? 0.5 : 1.0;
+     
+     utterance.onstart = () => setIsSpeaking(true);
+     utterance.onend = () => setIsSpeaking(false);
+     utterance.onerror = () => setIsSpeaking(false);
+ 
+     window.speechSynthesis.speak(utterance);
+   };
 
   // Auth Listener
   useEffect(() => {
@@ -654,7 +759,8 @@ export default function App() {
         meaning: result.meaning,
         grammarExplanation: result.grammarExplanation,
         variations: result.variations || [],
-        createdAt: serverTimestamp()
+        createdAt: serverTimestamp(),
+        difficulty: inputDifficulty
       };
       
       if (currentSentenceCategoryId) {
@@ -664,7 +770,8 @@ export default function App() {
         data.sectionId = currentSentenceSectionId;
       }
 
-      await addDoc(collection(db, 'saved_sentences'), data);
+      const docRef = await addDoc(collection(db, 'saved_sentences'), data);
+      setResult({ ...result, id: docRef.id, originalText: inputText, difficulty: inputDifficulty } as SavedSentence);
       setError(null);
     } catch (err) {
       handleFirestoreError(err, OperationType.CREATE, 'saved_sentences');
@@ -769,6 +876,157 @@ export default function App() {
     setIsEditingExplanation(false);
   };
 
+  const handleSaveNote = async () => {
+    if (!result) return;
+    if ('id' in result) {
+      const sentenceId = (result as SavedSentence).id;
+      try {
+        await updateDoc(doc(db, 'saved_sentences', sentenceId), {
+          note: noteText
+        });
+      } catch (err) {
+        handleFirestoreError(err, OperationType.UPDATE, 'saved_sentences');
+        return;
+      }
+    }
+    setResult(prev => prev ? { ...prev, note: noteText } as SavedSentence : null);
+    setIsEditingNote(false);
+  };
+
+  const handleStartEditMain = () => {
+    if (!result) return;
+    setEditMainChinese(result.chinese);
+    setEditMainPinyin(result.pinyin);
+    setEditMainMeaning(result.meaning);
+    setEditMainOriginal((result as any).originalText || '');
+    setIsEditingMainSentence(true);
+  };
+
+  const handleSaveMainSentence = async () => {
+    if (!result || !editMainChinese.trim() || !editMainMeaning.trim()) return;
+    
+    if ('id' in result) {
+      const sentenceId = (result as SavedSentence).id;
+      try {
+        await updateDoc(doc(db, 'saved_sentences', sentenceId), {
+          chinese: editMainChinese.trim(),
+          pinyin: editMainPinyin.trim(),
+          meaning: editMainMeaning.trim(),
+          originalText: editMainOriginal.trim()
+        });
+      } catch (err) {
+        handleFirestoreError(err, OperationType.UPDATE, 'saved_sentences');
+        return;
+      }
+    }
+    
+    setResult(prev => prev ? {
+      ...prev,
+      chinese: editMainChinese.trim(),
+      pinyin: editMainPinyin.trim(),
+      meaning: editMainMeaning.trim(),
+      originalText: editMainOriginal.trim()
+    } as SavedSentence : null);
+    
+    setIsEditingMainSentence(false);
+  };
+
+  const handleAddVariation = async () => {
+    if (!result || !newVarChinese.trim() || !newVarMeaning.trim()) return;
+    
+    const newVar = {
+      chinese: newVarChinese.trim(),
+      pinyin: newVarPinyin.trim(),
+      meaning: newVarMeaning.trim()
+    };
+    
+    const updatedVariations = [...(result.variations || []), newVar];
+    
+    if ('id' in result) {
+      const sentenceId = (result as SavedSentence).id;
+      try {
+        await updateDoc(doc(db, 'saved_sentences', sentenceId), {
+          variations: updatedVariations
+        });
+      } catch (err) {
+        handleFirestoreError(err, OperationType.UPDATE, 'saved_sentences');
+        return;
+      }
+    }
+    
+    setResult(prev => prev ? { ...prev, variations: updatedVariations } as SavedSentence : null);
+    setIsAddingVariation(false);
+    setNewVarChinese('');
+    setNewVarPinyin('');
+    setNewVarMeaning('');
+  };
+
+  const handleSaveVarEdit = async (index: number) => {
+    if (!result || !editVarChinese.trim() || !editVarMeaning.trim()) return;
+    
+    const updatedVariations = [...(result.variations || [])];
+    updatedVariations[index] = {
+      chinese: editVarChinese.trim(),
+      pinyin: editVarPinyin.trim(),
+      meaning: editVarMeaning.trim()
+    };
+    
+    if ('id' in result) {
+      const sentenceId = (result as SavedSentence).id;
+      try {
+        await updateDoc(doc(db, 'saved_sentences', sentenceId), {
+          variations: updatedVariations
+        });
+      } catch (err) {
+        handleFirestoreError(err, OperationType.UPDATE, 'saved_sentences');
+        return;
+      }
+    }
+    
+    setResult(prev => prev ? { ...prev, variations: updatedVariations } as SavedSentence : null);
+    setEditingVarIdx(null);
+  };
+
+  const handleConfirmDeleteVar = (index: number) => {
+    if (!result || !result.variations) return;
+    
+    openConfirm(
+      "Xóa câu phát triển",
+      `Bạn có chắc chắn muốn xóa câu "${result.variations[index].chinese}" khỏi danh sách phát triển?`,
+      async () => {
+        const updatedVariations = result.variations!.filter((_, i) => i !== index);
+        
+        if ('id' in result) {
+          const sentenceId = (result as SavedSentence).id;
+          try {
+            await updateDoc(doc(db, 'saved_sentences', sentenceId), {
+              variations: updatedVariations
+            });
+          } catch (err) {
+            handleFirestoreError(err, OperationType.UPDATE, 'saved_sentences');
+            return;
+          }
+        }
+        
+        setResult(prev => prev ? { ...prev, variations: updatedVariations } as SavedSentence : null);
+      }
+    );
+  };
+
+  useEffect(() => {
+    if (result && 'note' in result) {
+      setNoteText((result as SavedSentence).note || '');
+    } else {
+      setNoteText('');
+    }
+    setIsEditingNote(false);
+    
+    // Reset editing states on change of active sentence
+    setIsEditingMainSentence(false);
+    setIsAddingVariation(false);
+    setEditingVarIdx(null);
+  }, [result]);
+
   const handleDeleteSentence = (e: React.MouseEvent, id: string) => {
     e.stopPropagation();
     openConfirm(
@@ -782,6 +1040,21 @@ export default function App() {
           }
         } catch (err) {
           handleFirestoreError(err, OperationType.DELETE, 'saved_sentences');
+        }
+      }
+    );
+  };
+
+  const handleDeleteVocabulary = (e: React.MouseEvent, id: string, word: string) => {
+    e.stopPropagation();
+    openConfirm(
+      "Xóa từ vựng / ngữ pháp", 
+      `Bạn có chắc chắn muốn xóa "${word}" khỏi sổ tay học tập?`, 
+      async () => {
+        try {
+          await deleteDoc(doc(db, 'vocabulary', id));
+        } catch (err) {
+          handleFirestoreError(err, OperationType.DELETE, 'vocabulary');
         }
       }
     );
@@ -900,6 +1173,28 @@ export default function App() {
         </div>
 
         <div className="flex items-center gap-2 md:gap-8">
+          {/* Audio Speed Control Toggle */}
+          <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-xl border border-slate-200/40">
+            <button
+              onClick={() => setSpeakSlowGlobal(false)}
+              className={`px-2.5 py-1 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all cursor-pointer ${
+                !speakSlowGlobal ? 'bg-white text-primary shadow-sm' : 'text-slate-500 hover:text-slate-700'
+              }`}
+              title="Tốc độ mặc định (1.0x)"
+            >
+              Nhanh
+            </button>
+            <button
+              onClick={() => setSpeakSlowGlobal(true)}
+              className={`px-2.5 py-1 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all flex items-center gap-1 cursor-pointer ${
+                speakSlowGlobal ? 'bg-amber-100 text-amber-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'
+              }`}
+              title="Tốc độ đọc chậm (0.5x)"
+            >
+              🐢 Chậm
+            </button>
+          </div>
+
           <div className="hidden md:flex items-center gap-3">
             <div className="w-24 lg:w-48 h-2.5 bg-slate-100 rounded-full overflow-hidden">
               <div 
@@ -979,8 +1274,9 @@ export default function App() {
       <main className="flex-1 p-4 md:p-8 max-w-[1440px] mx-auto w-full">
         {activeView === 'home' ? (
           /* HOME: Library View */
-          <div className="space-y-8">
-            <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-6 bg-white p-6 md:p-8 rounded-[2rem] shadow-sm border border-slate-100">
+          <div className="space-y-4 md:space-y-8">
+            {/* Desktop Library Header */}
+            <div className="hidden md:flex flex-col lg:flex-row lg:items-center justify-between gap-6 bg-white p-6 md:p-8 rounded-[2rem] shadow-sm border border-slate-100">
                <div className="space-y-1">
                  <h1 className="text-2xl md:text-3xl font-black text-slate-800 tracking-tight flex items-center gap-3">
                    <Library className="text-primary" size={28} /> Thư viện của tôi
@@ -1011,8 +1307,76 @@ export default function App() {
                </div>
             </div>
 
+            {/* Mobile Compact Library Header & Navigation */}
+            <div className="block md:hidden bg-white p-3 md:p-4 rounded-2xl border border-slate-100 shadow-sm space-y-3">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-black text-slate-800 flex items-center gap-1.5">
+                  <Library className="text-primary animate-pulse" size={15} /> Thư viện của tôi
+                </span>
+                <span className="text-[9px] font-bold text-slate-400 bg-slate-50 px-1.5 py-0.5 rounded border border-slate-100">
+                  {categories.length} chủ đề
+                </span>
+              </div>
+
+              {/* Scrollable category list */}
+              <div className="flex gap-1.5 overflow-x-auto pb-0.5 scrollbar-none snap-x -mx-3 px-3">
+                <button 
+                  onClick={() => { setSelectedFilterCategory('all'); setSelectedFilterSection('all'); }}
+                  className={`px-3 py-1.5 rounded-xl text-[9px] font-black uppercase tracking-wider shrink-0 transition-all duration-150 cursor-pointer snap-start
+                    ${selectedFilterCategory === 'all' 
+                      ? 'bg-primary text-white shadow-sm font-black' 
+                      : 'bg-slate-50 text-slate-500 border border-slate-100/30'}
+                  `}
+                >
+                  Tất cả
+                </button>
+                {categories.map(c => (
+                  <button 
+                    key={c.id}
+                    onClick={() => { setSelectedFilterCategory(c.id); setSelectedFilterSection('all'); }}
+                    className={`px-3 py-1.5 rounded-xl text-[9px] font-black uppercase tracking-wider shrink-0 transition-all duration-150 cursor-pointer snap-start
+                      ${selectedFilterCategory === c.id 
+                        ? 'bg-primary text-white shadow-sm font-black' 
+                        : 'bg-slate-50 text-slate-500 border border-slate-100/30'}
+                    `}
+                  >
+                    {c.name}
+                  </button>
+                ))}
+              </div>
+
+              {/* Sub-sections scroll for Mobile */}
+              {selectedFilterCategory !== 'all' && (
+                <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5 scrollbar-none -mx-3 px-3 pt-2.5 border-t border-slate-100/50">
+                  <button 
+                    onClick={() => setSelectedFilterSection('all')}
+                    className={`whitespace-nowrap px-2.5 py-1 rounded-lg text-[9px] font-black uppercase tracking-wide transition-all cursor-pointer
+                      ${selectedFilterSection === 'all' 
+                        ? 'bg-indigo-600 text-white shadow-sm' 
+                        : 'bg-indigo-50 text-indigo-550'}
+                    `}
+                  >
+                    Tất cả đoạn
+                  </button>
+                  {sections.filter(s => s.categoryId === selectedFilterCategory).map(s => (
+                    <button 
+                      key={s.id}
+                      onClick={() => setSelectedFilterSection(s.id)}
+                      className={`whitespace-nowrap px-2.5 py-1 rounded-lg text-[9px] font-black uppercase tracking-wide transition-all cursor-pointer
+                        ${selectedFilterSection === s.id 
+                          ? 'bg-indigo-600 text-white shadow-sm' 
+                          : 'bg-white text-indigo-400 border border-indigo-100/20'}
+                      `}
+                    >
+                      {s.name}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+
             {selectedFilterCategory !== 'all' && (
-              <div className="flex items-center gap-2 overflow-x-auto pb-2 custom-scrollbar">
+              <div className="hidden md:flex items-center gap-2 overflow-x-auto pb-2 custom-scrollbar">
                 <button 
                   onClick={() => setSelectedFilterSection('all')}
                   className={`whitespace-nowrap px-4 py-2 rounded-xl text-xs font-bold transition-all
@@ -1055,16 +1419,32 @@ export default function App() {
                          <span className={`text-[10px] font-black px-3.5 py-1.5 rounded-xl uppercase tracking-wider ${theme.badge}`}>
                            {categories.find(c => c.id === sentence.categoryId)?.name || 'Chung'}
                          </span>
-                         <span className="text-[10px] font-black text-slate-400 uppercase tracking-wider bg-slate-50 border border-slate-100 px-3 py-1 rounded-lg">
-                           {sections.find(s => s.id === sentence.sectionId)?.name || 'Mặc định'}
-                         </span>
+                         <div className="flex gap-1.5 items-center">
+                           {(() => {
+                             const diff = getDifficultyTranslation(sentence.difficulty);
+                             return (
+                               <span className={`text-[8px] font-black px-2 py-1 rounded border uppercase tracking-wider shrink-0 ${diff.color}`}>
+                                 {diff.label}
+                               </span>
+                             );
+                           })()}
+                           <span className="text-[8px] font-black text-slate-400 uppercase tracking-wider bg-slate-50 border border-slate-100 px-2 py-1 rounded">
+                             {sections.find(s => s.id === sentence.sectionId)?.name || 'Mặc định'}
+                           </span>
+                         </div>
                       </div>
                       <div className="flex-1">
                         <h3 className={`text-xl md:text-2xl font-bold text-slate-800 mb-2 transition-colors duration-200 leading-tight tracking-[0.08em] ${theme.activeText}`}>
-                          {sentence.chinese}
+                          {renderHighlightedChinese(sentence.chinese, sentence.id)}
                         </h3>
                         <p className="text-sm md:text-base text-slate-400 italic mb-3 font-medium">{sentence.pinyin}</p>
                         <p className="text-sm md:text-base text-slate-600 font-medium line-clamp-3 leading-relaxed">{sentence.meaning}</p>
+                        {sentence.note && (
+                          <div className="mt-4 p-3 bg-amber-50/40 rounded-2xl border border-amber-100/60 flex gap-2 items-start text-left">
+                            <Bookmark size={14} className="text-amber-500 shrink-0 mt-0.5" />
+                            <p className="text-xs font-semibold text-amber-800 line-clamp-2 leading-relaxed">{sentence.note}</p>
+                          </div>
+                        )}
                       </div>
                       <div className={`mt-6 pt-6 border-t border-slate-100/70 flex items-center justify-between text-slate-300 transition-colors duration-200 ${theme.activeText}`}>
                         <span className="text-[10px] font-black uppercase tracking-widest flex items-center gap-2">
@@ -1108,11 +1488,11 @@ export default function App() {
                 </div>
                 
                 {/* Scrollable category pill menu */}
-                <div className="flex flex-wrap gap-2 pt-1">
+                <div className="flex flex-wrap gap-2 pt-1 border-b border-slate-50 pb-3">
                   <button
                     onClick={() => {
                       setLearnSelectedCategory('all');
-                      const filtered = savedSentences;
+                      const filtered = savedSentences.filter(s => learnSelectedDifficulty === 'all' || (s.difficulty || 'basic') === learnSelectedDifficulty);
                       if (result) {
                         if (filtered.length > 0) {
                           setResult(filtered[0]);
@@ -1136,7 +1516,7 @@ export default function App() {
                         key={c.id}
                         onClick={() => {
                           setLearnSelectedCategory(c.id);
-                          const filtered = savedSentences.filter((s) => s.categoryId === c.id);
+                          const filtered = savedSentences.filter((s) => s.categoryId === c.id && (learnSelectedDifficulty === 'all' || (s.difficulty || 'basic') === learnSelectedDifficulty));
                           if (result) {
                             if (filtered.length > 0) {
                               setResult(filtered[0]);
@@ -1156,6 +1536,58 @@ export default function App() {
                     );
                   })}
                 </div>
+
+                {/* Easy/Difficutly selector */}
+                <div className="flex flex-col gap-2 pt-1">
+                  <span className="text-xs font-black text-slate-500 uppercase tracking-wider flex items-center gap-1.5">
+                    <Zap size={14} className="text-amber-500" />
+                    Lọc theo mức độ khó:
+                  </span>
+                  <div className="flex flex-wrap gap-2">
+                    {[
+                      { id: 'all', label: 'Tất cả mức độ' },
+                      { id: 'basic', label: '⭐ Cơ bản' },
+                      { id: 'easy', label: '⭐⭐ Dễ' },
+                      { id: 'medium', label: '⭐⭐⭐ Trung bình' },
+                      { id: 'hard', label: '⭐⭐⭐⭐ Khó' }
+                    ].map((diff) => {
+                      const count = savedSentences.filter(s => {
+                        const matchesCategory = learnSelectedCategory === 'all' || s.categoryId === learnSelectedCategory;
+                        const sDiff = s.difficulty || 'basic';
+                        return matchesCategory && (diff.id === 'all' || sDiff === diff.id);
+                      }).length;
+                      
+                      return (
+                        <button
+                          key={diff.id}
+                          onClick={() => {
+                            setLearnSelectedDifficulty(diff.id);
+                            const filtered = savedSentences.filter(s => {
+                              const matchesCategory = learnSelectedCategory === 'all' || s.categoryId === learnSelectedCategory;
+                              const sDiff = s.difficulty || 'basic';
+                              const matchesDiff = diff.id === 'all' || sDiff === diff.id;
+                              return matchesCategory && matchesDiff;
+                            });
+                            if (result) {
+                              if (filtered.length > 0) {
+                                setResult(filtered[0]);
+                              } else {
+                                setResult(null);
+                              }
+                            }
+                          }}
+                          className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all duration-200 cursor-pointer ${
+                            learnSelectedDifficulty === diff.id
+                              ? 'bg-amber-500 text-white shadow-md shadow-amber-100'
+                              : 'bg-slate-50 text-slate-500 hover:bg-slate-100 hover:text-slate-700'
+                          }`}
+                        >
+                          {diff.label} ({count})
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
               </div>
             </div>
 
@@ -1168,28 +1600,50 @@ export default function App() {
                 <p className="text-slate-500 mb-8 font-medium">Chọn một câu từ danh sách bài học dưới đây để bắt đầu phân tích chi tiết:</p>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-left max-h-[350px] overflow-y-auto p-2 rounded-2xl bg-slate-50 border border-slate-100">
                   {savedSentences
-                    .filter(s => learnSelectedCategory === 'all' ? true : s.categoryId === learnSelectedCategory)
+                    .filter(s => {
+                      const matchesCategory = learnSelectedCategory === 'all' ? true : s.categoryId === learnSelectedCategory;
+                      const matchesDiff = learnSelectedDifficulty === 'all' ? true : (s.difficulty || 'basic') === learnSelectedDifficulty;
+                      return matchesCategory && matchesDiff;
+                    })
                     .map(s => (
                       <div 
                         key={s.id}
                         onClick={() => setResult(s)}
-                        className="p-4 bg-white rounded-2xl border border-slate-100 hover:border-emerald-500 hover:shadow-md cursor-pointer transition-all"
+                        className="p-4 bg-white rounded-2xl border border-slate-100 hover:border-emerald-500 hover:shadow-md cursor-pointer transition-all flex flex-col justify-between"
                       >
-                        <p className="font-bold text-slate-800 text-base mb-1 truncate tracking-[0.08em]">{s.chinese}</p>
-                        <p className="text-xs text-slate-400 truncate">{s.meaning}</p>
+                        <div>
+                          <div className="flex items-center gap-1.5 mb-1 justify-between">
+                            <p className="font-bold text-slate-800 text-base truncate tracking-[0.08em] flex-1">{renderHighlightedChinese(s.chinese, s.id)}</p>
+                            {(() => {
+                              const diff = getDifficultyTranslation(s.difficulty);
+                              return (
+                                <span className={`px-1.5 py-0.5 rounded text-[8px] font-black border ${diff.color} shrink-0`}>
+                                  {diff.label}
+                                </span>
+                              );
+                            })()}
+                          </div>
+                          <p className="text-xs text-slate-400 truncate">{s.meaning}</p>
+                        </div>
                       </div>
                     ))}
-                  {savedSentences.filter(s => learnSelectedCategory === 'all' ? true : s.categoryId === learnSelectedCategory).length === 0 && (
-                    <p className="col-span-full text-center text-slate-400 py-6 text-sm">Chưa có bài học nào được tạo trong chủ đề này. Hãy sang phần "Quản trị" để tạo!</p>
+                  {savedSentences.filter(s => {
+                    const matchesCategory = learnSelectedCategory === 'all' ? true : s.categoryId === learnSelectedCategory;
+                    const matchesDiff = learnSelectedDifficulty === 'all' ? true : (s.difficulty || 'basic') === learnSelectedDifficulty;
+                    return matchesCategory && matchesDiff;
+                  }).length === 0 && (
+                    <p className="col-span-full text-center text-slate-400 py-6 text-sm">Chưa có bài học nào được tạo trong chủ đề và mức độ khó này.</p>
                   )}
                 </div>
               </div>
             ) : (
               <div className="space-y-6 animate-in fade-in duration-300">
                 {(() => {
-                  const learnSentences = learnSelectedCategory === 'all' 
-                    ? savedSentences 
-                    : savedSentences.filter(s => s.categoryId === learnSelectedCategory);
+                  const learnSentences = savedSentences.filter(s => {
+                    const matchesCategory = learnSelectedCategory === 'all' ? true : s.categoryId === learnSelectedCategory;
+                    const matchesDiff = learnSelectedDifficulty === 'all' ? true : (s.difficulty || 'basic') === learnSelectedDifficulty;
+                    return matchesCategory && matchesDiff;
+                  });
                   const currentIndex = learnSentences.findIndex(s => s.id === (result as SavedSentence).id);
                   const currentNo = currentIndex !== -1 ? currentIndex + 1 : 0;
                   const totalCount = learnSentences.length;
@@ -1256,13 +1710,28 @@ export default function App() {
                         <span className="text-[10px] font-black text-emerald-600 bg-emerald-50 px-3 py-1 rounded-full uppercase tracking-tighter">
                           Văn bản học tập
                         </span>
-                        <button onClick={() => handleSpeak(result.chinese)} className="p-3 bg-primary/5 text-primary rounded-2xl hover:bg-primary/10 transition-colors">
-                          <Volume2 size={32}/>
-                        </button>
+                        <div className="flex gap-2">
+                          <button 
+                            onClick={() => handleSpeak(result.chinese, false)} 
+                            title="Nghe tốc độ thường (1.0x)"
+                            className="p-2.5 bg-primary/5 text-primary rounded-xl hover:bg-primary/10 transition-colors flex items-center gap-1 cursor-pointer"
+                          >
+                            <Volume2 size={20}/>
+                            <span className="text-[10px] font-black uppercase">1x</span>
+                          </button>
+                          <button 
+                            onClick={() => handleSpeak(result.chinese, true)} 
+                            title="Nghe tốc độ chậm (0.5x)"
+                            className="p-2.5 bg-amber-50 text-amber-600 rounded-xl hover:bg-amber-100 transition-colors flex items-center gap-1 cursor-pointer border border-amber-200/50"
+                          >
+                            <span>🐢</span>
+                            <span className="text-[10px] font-black text-amber-700">0.5x</span>
+                          </button>
+                        </div>
                       </div>
                       
                       <div className="mb-6 md:mb-8">
-                        <p className="text-4xl md:text-6xl font-bold text-slate-800 tracking-[0.12em] mb-3 md:mb-4 leading-normal break-words">{result.chinese}</p>
+                        <p className="text-4xl md:text-6xl font-bold text-slate-800 tracking-[0.12em] mb-3 md:mb-4 leading-normal break-words">{renderHighlightedChinese(result.chinese, (result as any).id)}</p>
                         <p className="text-base md:text-xl text-slate-500 font-medium italic break-words">{result.pinyin}</p>
                       </div>
 
@@ -1273,6 +1742,69 @@ export default function App() {
                           <p className="text-xs md:text-sm text-slate-400 italic">Văn bản gốc: {(result as any).originalText}</p>
                         )}
                       </div>
+                    </div>
+
+                    {/* Ghi chú học tập / Mẫu câu thích */}
+                    <div className="sleek-card bg-gradient-to-br from-amber-50/20 to-white transition-all shadow-md border border-amber-100/50 relative overflow-hidden">
+                      <div className="absolute -top-12 -right-12 w-24 h-24 bg-amber-500/5 rounded-full"></div>
+                      <div className="flex items-center justify-between mb-4 relative z-10 w-full">
+                        <h4 className="text-xs md:text-sm font-black text-amber-800 uppercase tracking-wider flex items-center gap-1.5">
+                          <Bookmark size={15} className="text-amber-500 shrink-0" />
+                          Ghi chú & Mẫu câu học tập
+                        </h4>
+                        {!isEditingNote ? (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setNoteText((result as SavedSentence).note || '');
+                              setIsEditingNote(true);
+                            }}
+                            className="text-[10px] md:text-xs font-black text-amber-800 hover:text-amber-950 bg-amber-100 border border-amber-200/60 px-3 py-1.5 rounded-xl transition-all cursor-pointer inline-flex items-center shrink-0"
+                          >
+                            Chỉnh sửa
+                          </button>
+                        ) : (
+                          <div className="flex gap-1.5 shrink-0">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setIsEditingNote(false);
+                                setNoteText((result as SavedSentence).note || '');
+                              }}
+                              className="text-[10px] md:text-xs font-bold text-slate-500 hover:text-slate-700 bg-slate-100 px-2.5 py-1.5 rounded-xl transition-all cursor-pointer"
+                            >
+                              Hủy
+                            </button>
+                            <button
+                              type="button"
+                              onClick={handleSaveNote}
+                              className="text-[10px] md:text-xs font-black text-white bg-amber-600 hover:bg-amber-700 px-2.5 py-1.5 rounded-xl shadow-sm transition-all cursor-pointer"
+                            >
+                              Lưu lại
+                            </button>
+                          </div>
+                        )}
+                      </div>
+
+                      {isEditingNote ? (
+                        <div className="space-y-3 relative z-10">
+                          <textarea
+                            value={noteText}
+                            onChange={(e) => setNoteText(e.target.value)}
+                            rows={3}
+                            placeholder="Nhập ghi chú bằng tiếng Việt: ví dụ mẫu câu thích, từ vựng hay cấu trúc ngữ pháp dùng trong câu này..."
+                            className="w-full text-sm font-medium p-3.5 border border-amber-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 text-slate-700 leading-relaxed bg-white/70"
+                          />
+                        </div>
+                      ) : (
+                        <div className="text-sm font-medium text-slate-600 leading-relaxed min-h-[50px] flex flex-col justify-center relative z-10 w-full text-left">
+                          {(result as SavedSentence).note ? (
+                            <p className="whitespace-pre-line text-slate-700">{(result as SavedSentence).note}</p>
+                          ) : (
+                            <p className="text-slate-400 italic text-[11px] text-center py-2">Bạn chưa thêm ghi chú nào. Hãy nhấp "Chỉnh sửa" để tự do lưu lại các mẫu câu yêu thích hoặc cách dùng của cụm từ này bằng tiếng Việt nhé!</p>
+                          )}
+                        </div>
+                      )}
                     </div>
                   </div>
 
@@ -1370,9 +1902,14 @@ export default function App() {
                             <div key={idx} className="p-5 bg-white rounded-2xl border border-indigo-100/50 hover:border-indigo-300 transition-all group">
                               <div className="flex justify-between items-start mb-2">
                                 <p className="text-xl font-bold text-slate-800 group-hover:text-indigo-600 transition-colors tracking-[0.1em]">{v.chinese}</p>
-                                <button onClick={() => handleSpeak(v.chinese)} className="text-indigo-300 hover:text-indigo-600 transition-colors">
-                                  <Volume2 size={16} />
-                                </button>
+                                <div className="flex items-center gap-2">
+                                  <button onClick={() => handleSpeak(v.chinese, false)} title="Nghe thường" className="text-indigo-300 hover:text-indigo-600 transition-colors p-1 cursor-pointer">
+                                    <Volume2 size={16} />
+                                  </button>
+                                  <button onClick={() => handleSpeak(v.chinese, true)} title="Nghe chậm" className="text-amber-500 hover:text-amber-600 transition-colors p-1 flex items-center gap-0.5 text-xs font-bold cursor-pointer">
+                                    🐢 <span className="text-[9px] font-black">0.5x</span>
+                                  </button>
+                                </div>
                               </div>
                               <p className="text-sm text-slate-400 italic mb-2">{v.pinyin}</p>
                               <p className="text-sm text-slate-600 font-medium">{v.meaning}</p>
@@ -1396,37 +1933,127 @@ export default function App() {
                       <Settings className="text-indigo-600" /> Hệ thống Quản trị
                     </h2>
                  </div>
-                 
                  <div className="space-y-6">
-                    <div className="space-y-4">
-                        <div className="flex items-center justify-between">
-                          <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Phân loại & Đoạn văn</label>
-                          {!isCreatingCategory ? (
-                            <button onClick={() => setIsCreatingCategory(true)} className="text-[10px] font-bold text-primary hover:underline">+ Mới</button>
-                          ) : (
-                            <form onSubmit={createCategory} className="flex gap-2">
-                              <input type="text" value={newCategoryName} onChange={(e) => setNewCategoryName(e.target.value)} className="text-[10px] border border-slate-200 rounded px-2 outline-none w-20" />
-                              <button type="submit" className="text-primary"><Check size={12}/></button>
+                    <div className="space-y-4 p-4 bg-slate-50/50 rounded-2xl border border-slate-100 shadow-sm">
+                        <div className="flex items-center justify-between border-b border-slate-100 pb-2">
+                          <span className="text-xs font-black text-slate-500 uppercase tracking-widest">Phân loại học tập</span>
+                        </div>
+
+                        {/* CHỦ ĐỀ SECTION */}
+                        <div className="space-y-2">
+                          <div className="flex items-center justify-between">
+                            <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Chủ đề (Category)</label>
+                            {!isCreatingCategory ? (
+                              <button 
+                                type="button"
+                                onClick={() => setIsCreatingCategory(true)} 
+                                className="text-xs font-bold text-indigo-600 hover:text-indigo-800 bg-indigo-50 hover:bg-indigo-100 px-2.5 py-1 rounded-lg transition-all cursor-pointer"
+                              >
+                                + Thêm chủ đề mới
+                              </button>
+                            ) : null}
+                          </div>
+
+                          {isCreatingCategory ? (
+                            <form onSubmit={createCategory} className="flex gap-2 bg-indigo-50/30 p-2 rounded-xl border border-indigo-100/50">
+                              <input 
+                                type="text" 
+                                value={newCategoryName} 
+                                onChange={(e) => setNewCategoryName(e.target.value)} 
+                                placeholder="Nhập tên chủ đề mới..."
+                                className="flex-1 text-xs font-medium border border-slate-200 rounded-xl px-3 py-2 bg-white outline-none focus:border-indigo-500 placeholder-slate-400" 
+                              />
+                              <button 
+                                type="submit" 
+                                className="p-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl transition-all font-bold text-xs cursor-pointer flex items-center justify-center disabled:opacity-50"
+                                disabled={!newCategoryName.trim()}
+                              >
+                                <Check size={14}/>
+                              </button>
+                              <button 
+                                type="button" 
+                                onClick={() => { setIsCreatingCategory(false); setNewCategoryName(''); }}
+                                className="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-xl transition-all text-xs font-bold cursor-pointer"
+                              >
+                                Hủy
+                              </button>
                             </form>
+                          ) : (
+                            <select 
+                              value={currentSentenceCategoryId} 
+                              onChange={(e) => { setCurrentSentenceCategoryId(e.target.value); setCurrentSentenceSectionId(''); }}
+                              className="w-full text-xs font-bold text-slate-700 bg-white border border-slate-200 rounded-xl px-4 py-2.5 outline-none focus:border-indigo-500 shadow-sm cursor-pointer"
+                            >
+                              <option value="">-- Chọn chủ đề học --</option>
+                              {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                            </select>
                           )}
                         </div>
-                        <div className="flex gap-2">
+
+                        {/* ĐOẠN VĂN SECTION */}
+                        <div className="space-y-2">
+                          <div className="flex items-center justify-between">
+                            <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Đoạn văn (Section)</label>
+                            {currentSentenceCategoryId && !isCreatingSection ? (
+                              <button 
+                                type="button"
+                                onClick={() => setIsCreatingSection(true)} 
+                                className="text-xs font-bold text-indigo-600 hover:text-indigo-800 bg-indigo-50 hover:bg-indigo-100 px-2.5 py-1 rounded-lg transition-all cursor-pointer"
+                              >
+                                + Thêm đoạn mới
+                              </button>
+                            ) : null}
+                          </div>
+
+                          {isCreatingSection ? (
+                            <form onSubmit={createSection} className="flex gap-2 bg-indigo-50/30 p-2 rounded-xl border border-indigo-100/50">
+                              <input 
+                                type="text" 
+                                value={newSectionName} 
+                                onChange={(e) => setNewSectionName(e.target.value)} 
+                                placeholder="Nhập tên đoạn mới..."
+                                className="flex-1 text-xs font-medium border border-slate-200 rounded-xl px-3 py-2 bg-white outline-none focus:border-indigo-500 placeholder-slate-400" 
+                              />
+                              <button 
+                                type="submit" 
+                                className="p-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl transition-all font-bold text-xs cursor-pointer flex items-center justify-center disabled:opacity-50"
+                                disabled={!newSectionName.trim()}
+                              >
+                                <Check size={14}/>
+                              </button>
+                              <button 
+                                type="button" 
+                                onClick={() => { setIsCreatingSection(false); setNewSectionName(''); }}
+                                className="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-xl transition-all text-xs font-bold cursor-pointer"
+                              >
+                                Hủy
+                              </button>
+                            </form>
+                          ) : (
+                            <select 
+                              value={currentSentenceSectionId} 
+                              onChange={(e) => setCurrentSentenceSectionId(e.target.value)}
+                              disabled={!currentSentenceCategoryId}
+                              className="w-full text-xs font-bold text-slate-600 bg-white border border-slate-200 rounded-xl px-4 py-2.5 outline-none focus:border-indigo-500 disabled:opacity-50 disabled:bg-slate-100 disabled:cursor-not-allowed shadow-sm cursor-pointer"
+                            >
+                              <option value="">{currentSentenceCategoryId ? '-- Chọn đoạn --' : '-- Hãy chọn chủ đề trước --'}</option>
+                              {sections.filter(s => s.categoryId === currentSentenceCategoryId).map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                            </select>
+                          )}
+                        </div>
+
+                        {/* MỨC ĐỘ KHÓ */}
+                        <div className="space-y-2">
+                          <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Mức độ khó</label>
                           <select 
-                            value={currentSentenceCategoryId} 
-                            onChange={(e) => { setCurrentSentenceCategoryId(e.target.value); setCurrentSentenceSectionId(''); }}
-                            className="flex-1 text-xs font-bold text-primary bg-primary/5 border border-primary/20 rounded-xl px-4 py-2 outline-none"
+                            value={inputDifficulty} 
+                            onChange={(e) => setInputDifficulty(e.target.value as any)}
+                            className="w-full text-xs font-bold text-slate-700 bg-white border border-slate-200 rounded-xl px-4 py-2.5 outline-none focus:border-indigo-500 shadow-sm cursor-pointer"
                           >
-                            <option value="">Chọn chủ đề</option>
-                            {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-                          </select>
-                          <select 
-                            value={currentSentenceSectionId} 
-                            onChange={(e) => setCurrentSentenceSectionId(e.target.value)}
-                            disabled={!currentSentenceCategoryId}
-                            className="flex-1 text-xs font-bold text-indigo-600 bg-indigo-50 border border-indigo-200 rounded-xl px-4 py-2 outline-none disabled:opacity-50"
-                          >
-                            <option value="">Chọn đoạn</option>
-                            {sections.filter(s => s.categoryId === currentSentenceCategoryId).map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                            <option value="basic">⭐ Cơ bản</option>
+                            <option value="easy">⭐⭐ Dễ</option>
+                            <option value="medium">⭐⭐⭐ Trung bình</option>
+                            <option value="hard">⭐⭐⭐⭐ Khó</option>
                           </select>
                         </div>
                     </div>
@@ -1466,7 +2093,17 @@ export default function App() {
                       `}
                      >
                        <div className="truncate pr-4 flex-1">
-                          <p className="text-xs font-bold text-slate-700 truncate tracking-[0.08em]">{s.chinese}</p>
+                          <div className="flex items-center gap-1.5 mb-0.5">
+                            <p className="text-xs font-bold text-slate-700 truncate tracking-[0.08em]">{renderHighlightedChinese(s.chinese, s.id)}</p>
+                            {(() => {
+                              const diff = getDifficultyTranslation(s.difficulty);
+                              return (
+                                <span className={`px-1.5 py-0.5 rounded text-[8px] font-black border ${diff.color} shrink-0`}>
+                                  {diff.label}
+                                </span>
+                              );
+                            })()}
+                          </div>
                           <p className="text-[10px] text-slate-400 truncate">{s.meaning}</p>
                        </div>
                        <button onClick={(e) => handleDeleteSentence(e, s.id)} className="opacity-0 group-hover:opacity-100 text-slate-300 hover:text-rose-500"><Trash2 size={12}/></button>
@@ -1493,14 +2130,56 @@ export default function App() {
                                  <Bookmark size={12}/> Lưu vào thư viện
                                </button>
                              ) : (
-                               <div className="text-xs font-bold text-emerald-600 bg-emerald-50 px-2 py-1 rounded-lg">Đã lưu trong thư viện</div>
+                               <div className="flex flex-wrap items-center gap-3">
+                                 <div className="text-xs font-bold text-emerald-600 bg-emerald-50 px-2 py-1 rounded-lg">Đã lưu trong thư viện</div>
+                                 <div className="flex items-center gap-1.5 bg-slate-50 border border-slate-100 rounded-xl px-2 py-1">
+                                   <span className="text-[10px] font-black text-slate-400 uppercase tracking-wider">Độ khó:</span>
+                                   <select
+                                     value={(result as SavedSentence).difficulty || 'basic'}
+                                     onChange={async (e) => {
+                                       const newDifficulty = e.target.value as 'basic' | 'easy' | 'medium' | 'hard';
+                                       try {
+                                         await updateDoc(doc(db, 'saved_sentences', (result as SavedSentence).id), {
+                                           difficulty: newDifficulty
+                                         });
+                                         setResult(prev => prev ? { ...prev, difficulty: newDifficulty } as SavedSentence : null);
+                                       } catch (err) {
+                                         handleFirestoreError(err, OperationType.UPDATE, 'saved_sentences');
+                                       }
+                                     }}
+                                     className="text-[10px] font-bold border-none bg-transparent focus:outline-none cursor-pointer text-slate-700 p-0"
+                                    >
+                                      <option value="basic">⭐ Cơ bản</option>
+                                      <option value="easy">⭐⭐ Dễ</option>
+                                      <option value="medium">⭐⭐⭐ Trung bình</option>
+                                      <option value="hard">⭐⭐⭐⭐ Khó</option>
+                                   </select>
+                                 </div>
+                               </div>
                              )}
                           </div>
-                          <button onClick={() => handleSpeak(result.chinese)} className="p-3 bg-primary/5 text-primary rounded-2xl hover:bg-primary/10 transition-colors"><Volume2 size={32}/></button>
+                          <div className="flex gap-2">
+                            <button 
+                              onClick={() => handleSpeak(result.chinese, false)} 
+                              title="Nghe tốc độ thường (1.0x)"
+                              className="p-2.5 bg-primary/5 text-primary rounded-xl hover:bg-primary/10 transition-colors flex items-center gap-1 cursor-pointer"
+                            >
+                              <Volume2 size={20}/>
+                              <span className="text-[10px] font-black uppercase">1x</span>
+                            </button>
+                            <button 
+                              onClick={() => handleSpeak(result.chinese, true)} 
+                              title="Nghe tốc độ chậm (0.5x)"
+                              className="p-2.5 bg-amber-50 text-amber-600 rounded-xl hover:bg-amber-100 transition-colors flex items-center gap-1 cursor-pointer border border-amber-200/50"
+                            >
+                              <span>🐢</span>
+                              <span className="text-[10px] font-black text-amber-700">0.5x</span>
+                            </button>
+                          </div>
                        </div>
                        
                         <div className="mb-6 md:mb-8 relative" onMouseUp={handleSelection}>
-                          <p className="text-4xl md:text-6xl font-bold text-slate-800 tracking-[0.12em] mb-3 md:mb-4 leading-normal break-words">{result.chinese}</p>
+                          <p className="text-4xl md:text-6xl font-bold text-slate-800 tracking-[0.12em] mb-3 md:mb-4 leading-normal break-words">{renderHighlightedChinese(result.chinese, (result as any).id)}</p>
                           <p className="text-base md:text-xl text-slate-500 font-medium italic break-words">{result.pinyin}</p>
                           
                           {/* Floating Selection Menu */}
@@ -1540,30 +2219,282 @@ export default function App() {
                     </div>
 
                     <div className="sleek-card">
+                     {/* Ghi chú học tập / Mẫu câu thích cho thư viện */}
+                     <div className="sleek-card bg-gradient-to-br from-amber-50/20 to-white transition-all shadow-md border border-amber-100/50 relative overflow-hidden mb-6">
+                       <div className="absolute -top-12 -right-12 w-24 h-24 bg-amber-500/5 rounded-full"></div>
+                       <div className="flex items-center justify-between mb-4 relative z-10 w-full">
+                         <h4 className="text-xs md:text-sm font-black text-amber-800 uppercase tracking-wider flex items-center gap-1.5">
+                           <Bookmark size={15} className="text-amber-500 shrink-0" />
+                           Ghi chú & Mẫu câu học tập
+                         </h4>
+                         {('id' in result) ? (
+                           !isEditingNote ? (
+                             <button
+                               type="button"
+                               onClick={() => {
+                                 setNoteText((result as SavedSentence).note || '');
+                                 setIsEditingNote(true);
+                               }}
+                               className="text-[10px] md:text-xs font-black text-amber-800 hover:text-amber-950 bg-amber-100 border border-amber-200/60 px-3 py-1.5 rounded-xl transition-all cursor-pointer inline-flex items-center shrink-0"
+                             >
+                               Chỉnh sửa
+                             </button>
+                           ) : (
+                             <div className="flex gap-1.5 shrink-0">
+                               <button
+                                 type="button"
+                                 onClick={() => {
+                                   setIsEditingNote(false);
+                                   setNoteText((result as SavedSentence).note || '');
+                                 }}
+                                 className="text-[10px] md:text-xs font-bold text-slate-500 hover:text-slate-700 bg-slate-100 px-2.5 py-1.5 rounded-xl transition-all cursor-pointer"
+                               >
+                                 Hủy
+                               </button>
+                               <button
+                                 type="button"
+                                 onClick={handleSaveNote}
+                                 className="text-[10px] md:text-xs font-black text-white bg-amber-600 hover:bg-amber-700 px-3 py-1.5 rounded-xl shadow-sm transition-all cursor-pointer"
+                               >
+                                 Lưu lại
+                               </button>
+                             </div>
+                           )
+                         ) : null}
+                       </div>
+
+                       {('id' in result) ? (
+                         isEditingNote ? (
+                           <div className="space-y-3 relative z-10">
+                             <textarea
+                               value={noteText}
+                               onChange={(e) => setNoteText(e.target.value)}
+                               rows={3}
+                               placeholder="Nhập ghi chú bằng tiếng Việt: ví dụ mẫu câu thích, từ vựng hay cấu trúc ngữ pháp dùng trong câu này..."
+                               className="w-full text-sm font-medium p-3.5 border border-amber-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 text-slate-700 leading-relaxed bg-white/70"
+                             />
+                           </div>
+                         ) : (
+                           <div className="text-sm font-medium text-slate-600 leading-relaxed min-h-[50px] flex flex-col justify-center relative z-10 w-full text-left">
+                             {(result as SavedSentence).note ? (
+                               <p className="whitespace-pre-line text-slate-700">{(result as SavedSentence).note}</p>
+                             ) : (
+                               <p className="text-slate-400 italic text-[11px] text-center py-2">Bạn chưa thêm ghi chú nào. Hãy nhấp "Chỉnh sửa" để tự do lưu lại các mẫu câu yêu thích hoặc cách dùng của cụm từ này bằng tiếng Việt nhé!</p>
+                             )}
+                           </div>
+                         )
+                       ) : (
+                         <p className="text-slate-400 italic text-[11px] text-center py-2 relative z-10">
+                           Hãy lưu câu này vào thư viện để tự do biên soạn ghi chú, lưu mẫu câu yêu thích và lưu giữ cách dùng nhé!
+                         </p>
+                       )}
+                     </div>
+
                        <h3 className="text-lg font-bold text-slate-800 mb-6 flex items-center gap-2"><BookOpen className="text-primary" /> Phân tích Bài học</h3>
                        <div className="markdown-body">
                           <ReactMarkdown>{result.grammarExplanation}</ReactMarkdown>
                        </div>
                     </div>
 
-                    {result.variations && result.variations.length > 0 && (
-                      <div className="sleek-card bg-gradient-to-br from-indigo-50/50 to-white">
-                        <h3 className="text-lg font-bold text-slate-800 mb-6 flex items-center gap-2">
-                          <Sparkles className="text-indigo-600" /> Câu phát triển
-                        </h3>
-                        <div className="space-y-4">
-                          {result.variations.map((v, idx) => (
-                            <div key={idx} className="p-5 bg-white rounded-2xl border border-indigo-100/50 hover:border-indigo-300 transition-all group">
-                              <div className="flex justify-between items-start mb-2">
-                                <p className="text-2xl font-bold text-slate-800 group-hover:text-indigo-600 transition-colors tracking-[0.1em]">{v.chinese}</p>
-                                <button onClick={() => handleSpeak(v.chinese)} className="text-indigo-300 hover:text-indigo-600 transition-colors">
-                                  <Volume2 size={16} />
-                                </button>
+                    {result && (
+                      <div className="sleek-card bg-gradient-to-br from-indigo-50/50 to-white space-y-6">
+                        <div className="flex items-center justify-between">
+                          <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2">
+                            <Sparkles className="text-indigo-600" /> Câu phát triển bổ sung {result.variations && `(${result.variations.length})`}
+                          </h3>
+                          {!isAddingVariation ? (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setNewVarChinese('');
+                                setNewVarPinyin('');
+                                setNewVarMeaning('');
+                                setIsAddingVariation(true);
+                              }}
+                              className="text-xs font-bold text-indigo-600 hover:text-indigo-800 bg-indigo-50 hover:bg-indigo-100 px-3 py-1.5 rounded-xl transition-all cursor-pointer"
+                            >
+                              + Thêm câu phát triển
+                            </button>
+                          ) : null}
+                        </div>
+
+                        {isAddingVariation && (
+                          <div className="bg-white p-5 rounded-2xl border border-indigo-100 space-y-3 shadow-sm animate-in slide-in-from-top-4 duration-300">
+                            <p className="text-xs font-black text-indigo-600 uppercase tracking-wider">Thêm câu phát triển mới</p>
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                              <div className="space-y-1">
+                                <label className="text-[10px] font-black text-slate-400 uppercase">Chữ Hán</label>
+                                <input
+                                  type="text"
+                                  value={newVarChinese}
+                                  onChange={(e) => setNewVarChinese(e.target.value)}
+                                  placeholder="Ví dụ: 我去商店。"
+                                  className="w-full text-base font-bold p-2.5 border border-slate-200 rounded-xl focus:outline-none focus:border-indigo-500 text-slate-800"
+                                />
                               </div>
-                              <p className="text-sm text-slate-400 italic mb-2">{v.pinyin}</p>
-                              <p className="text-sm text-slate-600 font-medium">{v.meaning}</p>
+                              <div className="space-y-1">
+                                <label className="text-[10px] font-black text-slate-400 uppercase">Phiên âm (Pinyin)</label>
+                                <input
+                                  type="text"
+                                  value={newVarPinyin}
+                                  onChange={(e) => setNewVarPinyin(e.target.value)}
+                                  placeholder="Ví dụ: wǒ qù shāngdiàn."
+                                  className="w-full text-base font-medium p-2.5 border border-slate-200 rounded-xl focus:outline-none focus:border-indigo-500 italic text-slate-600"
+                                />
+                              </div>
                             </div>
-                          ))}
+                            <div className="space-y-1">
+                              <label className="text-[10px] font-black text-slate-400 uppercase">Nghĩa tiếng Việt</label>
+                              <input
+                                type="text"
+                                value={newVarMeaning}
+                                onChange={(e) => setNewVarMeaning(e.target.value)}
+                                placeholder="Ví dụ: Tôi đi đến cửa hàng."
+                                className="w-full text-base font-medium p-2.5 border border-slate-200 rounded-xl focus:outline-none focus:border-indigo-500 text-slate-700"
+                              />
+                            </div>
+                            <div className="flex justify-end gap-2 pt-1">
+                              <button
+                                type="button"
+                                onClick={() => setIsAddingVariation(false)}
+                                className="px-3.5 py-1.5 text-xs font-bold text-slate-500 hover:bg-slate-100 rounded-lg transition-colors cursor-pointer"
+                              >
+                                Hủy
+                              </button>
+                              <button
+                                type="button"
+                                onClick={handleAddVariation}
+                                disabled={!newVarChinese.trim() || !newVarMeaning.trim()}
+                                className="px-4 py-1.5 text-xs font-black text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg transition-colors disabled:opacity-50 cursor-pointer"
+                              >
+                                Lưu câu
+                              </button>
+                            </div>
+                          </div>
+                        )}
+
+                        <div className="space-y-4">
+                          {result.variations && result.variations.length > 0 ? (
+                            result.variations.map((v, idx) => {
+                              const isEditingThisVar = editingVarIdx === idx;
+                              return (
+                                <div key={idx} className="p-5 bg-white rounded-2xl border border-indigo-100/50 hover:border-indigo-300 transition-all group">
+                                  {isEditingThisVar ? (
+                                    <div className="space-y-3">
+                                      <p className="text-[10px] font-black text-indigo-600 uppercase tracking-wider">Chỉnh sửa câu phát triển</p>
+                                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                        <div className="space-y-1">
+                                          <label className="text-[10px] font-black text-slate-400 uppercase">Chữ Hán</label>
+                                          <input
+                                            type="text"
+                                            value={editVarChinese}
+                                            onChange={(e) => setEditVarChinese(e.target.value)}
+                                            className="w-full text-base font-bold p-2.5 border border-slate-200 rounded-xl focus:outline-none focus:border-indigo-500 text-slate-800"
+                                          />
+                                        </div>
+                                        <div className="space-y-1">
+                                          <label className="text-[10px] font-black text-slate-400 uppercase">Phiên âm (Pinyin)</label>
+                                          <input
+                                            type="text"
+                                            value={editVarPinyin}
+                                            onChange={(e) => setEditVarPinyin(e.target.value)}
+                                            className="w-full text-base font-medium p-2.5 border border-slate-200 rounded-xl focus:outline-none focus:border-indigo-500 italic text-slate-600"
+                                          />
+                                        </div>
+                                      </div>
+                                      <div className="space-y-1">
+                                        <label className="text-[10px] font-black text-slate-400 uppercase">Dịch nghĩa</label>
+                                        <input
+                                          type="text"
+                                          value={editVarMeaning}
+                                          onChange={(e) => setEditVarMeaning(e.target.value)}
+                                          className="w-full text-base font-medium p-2.5 border border-slate-200 rounded-xl focus:outline-none focus:border-indigo-500 text-slate-700"
+                                        />
+                                      </div>
+                                      <div className="flex justify-end gap-2 pt-1">
+                                        <button
+                                          type="button"
+                                          onClick={() => setEditingVarIdx(null)}
+                                          className="px-3 py-1 text-xs font-bold text-slate-500 hover:bg-slate-100 rounded-lg transition-colors cursor-pointer"
+                                        >
+                                          Hủy
+                                        </button>
+                                        <button
+                                          type="button"
+                                          onClick={() => handleSaveVarEdit(idx)}
+                                          disabled={!editVarChinese.trim() || !editVarMeaning.trim()}
+                                          className="px-4 py-1 text-xs font-black text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg transition-colors cursor-pointer"
+                                        >
+                                          Cập nhật
+                                        </button>
+                                      </div>
+                                    </div>
+                                  ) : (
+                                    <div>
+                                      <div className="flex justify-between items-start mb-2">
+                                        <p className="text-2xl font-bold text-slate-800 group-hover:text-indigo-600 transition-colors tracking-[0.1em]">{v.chinese}</p>
+                                        <div className="flex items-center gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                                          <button 
+                                            onClick={() => handleSpeak(v.chinese, false)} 
+                                            title="Phát âm thường (1x)"
+                                            className="text-indigo-400 hover:text-indigo-600 transition-colors p-1 cursor-pointer"
+                                          >
+                                            <Volume2 size={15} />
+                                          </button>
+                                          <button 
+                                            onClick={() => handleSpeak(v.chinese, true)} 
+                                            title="Phát âm chậm (0.5x)"
+                                            className="text-amber-500 hover:text-amber-600 transition-colors p-1 cursor-pointer text-xs font-bold"
+                                          >
+                                            🐢
+                                          </button>
+                                          <button 
+                                            onClick={() => {
+                                              setEditingVarIdx(idx);
+                                              setEditVarChinese(v.chinese);
+                                              setEditVarPinyin(v.pinyin);
+                                              setEditVarMeaning(v.meaning);
+                                            }} 
+                                            type="button"
+                                            title="Sửa câu phát triển"
+                                            className="text-slate-400 hover:text-indigo-600 transition-colors p-1 cursor-pointer"
+                                          >
+                                            <Settings size={14} />
+                                          </button>
+                                          <button 
+                                            onClick={() => handleConfirmDeleteVar(idx)} 
+                                            type="button"
+                                            title="Xóa câu"
+                                            className="text-slate-400 hover:text-rose-500 transition-colors p-1 cursor-pointer"
+                                          >
+                                            <Trash2 size={14} />
+                                          </button>
+                                        </div>
+                                      </div>
+                                      <p className="text-sm text-slate-400 italic mb-2">{v.pinyin}</p>
+                                      <p className="text-sm text-slate-600 font-medium">{v.meaning}</p>
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            })
+                          ) : (
+                            <div className="text-center py-8 border border-dashed border-indigo-200/50 rounded-2xl bg-indigo-50/10">
+                              <p className="text-xs text-slate-400 italic font-medium">Bản dịch này hiện chưa có câu phát triển bổ sung nào.</p>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setNewVarChinese('');
+                                  setNewVarPinyin('');
+                                  setNewVarMeaning('');
+                                  setIsAddingVariation(true);
+                                }}
+                                className="mt-2 text-xs font-bold text-indigo-600 hover:underline cursor-pointer opacity-80 hover:opacity-100"
+                              >
+                                Thêm câu phát triển ngay →
+                              </button>
+                            </div>
+                          )}
                         </div>
                       </div>
                     )}
@@ -1578,30 +2509,74 @@ export default function App() {
               /* Test Selection Screen */
               <div className="space-y-8 py-10">
                 <div className="text-center mb-12">
-                <h2 className="text-4xl font-extrabold text-slate-800 mb-4 flex items-center justify-center gap-3">
-                  <Zap className="text-orange-500" size={40} /> Trung tâm Khảo thí
-                </h2>
-                <p className="text-slate-500 text-lg max-w-xl mx-auto">Chọn chế độ luyện tập phù hợp để củng cố kiến thức của bạn ngay hôm nay!</p>
-              </div>
+                  <h2 className="text-4xl font-extrabold text-slate-800 mb-4 flex items-center justify-center gap-3">
+                    <Zap className="text-orange-500" size={40} /> Trung tâm Khảo thí
+                  </h2>
+                  <p className="text-slate-500 text-lg max-w-xl mx-auto">Chọn chế độ luyện tập phù hợp để củng cố kiến thức của bạn ngay hôm nay!</p>
+                </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-6 lg:gap-8">
-                {/* Vocabulary Test Card */}
-                <motion.div 
-                  whileHover={{ y: -8 }}
-                  onClick={startVocabQuiz}
-                  className="bg-white p-6 md:p-8 rounded-[2.5rem] border-2 border-slate-100 shadow-xl shadow-slate-200/50 cursor-pointer group hover:border-orange-500/30 transition-all flex flex-col justify-between"
-                >
-                  <div>
-                    <div className="w-14 h-14 bg-orange-50 rounded-2xl flex items-center justify-center mb-6 group-hover:scale-110 transition-transform">
-                      <Bookmark size={28} className="text-orange-500 fill-orange-500" />
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-6 lg:gap-8">
+                  {/* Vocabulary Test Card */}
+                  <motion.div 
+                    whileHover={{ y: -8 }}
+                    onClick={startVocabQuiz}
+                    className="bg-white p-6 md:p-8 rounded-[2.5rem] border-2 border-slate-100 shadow-xl shadow-slate-200/50 cursor-pointer group hover:border-orange-500/30 transition-all flex flex-col justify-between"
+                  >
+                    <div className="w-full">
+                      <div className="w-14 h-14 bg-orange-50 rounded-2xl flex items-center justify-center mb-6 group-hover:scale-110 transition-transform">
+                        <Bookmark size={28} className="text-orange-500 fill-orange-500" />
+                      </div>
+                      <h3 className="text-xl font-bold text-slate-800 mb-3">Kiểm tra Từ vựng</h3>
+                      <p className="text-slate-500 text-xs md:text-sm mb-4 leading-relaxed">Ôn tập các từ vựng và cấu trúc bạn đã lưu trong quá trình học. Thử thách trí nhớ với flashcards.</p>
+
+                      {/* Category Selection Dropdown inside card */}
+                      <div className="mt-4 text-left w-full space-y-3" onClick={(e) => e.stopPropagation()}>
+                        <div className="space-y-1">
+                          <label className="block text-[10px] font-black text-slate-400 uppercase tracking-wider mb-1.5 flex items-center gap-1">
+                            <Bookmark size={11} className="text-orange-500 fill-orange-50" />
+                            Chọn chủ đề ôn tập:
+                          </label>
+                          <select
+                            value={vocabSelectedCategory}
+                            onChange={(e) => setVocabSelectedCategory(e.target.value)}
+                            className="w-full text-xs font-bold p-3 border border-slate-200/80 rounded-2xl focus:outline-none focus:ring-4 focus:ring-orange-500/10 focus:border-orange-500 bg-slate-50 text-slate-700 cursor-pointer transition-all"
+                          >
+                            <option value="all">Tất cả chủ đề ({vocabulary.length})</option>
+                            {categories.map((c) => {
+                              const count = vocabulary.filter(v => {
+                                const sentence = savedSentences.find(s => s.id === v.sentenceId);
+                                return sentence && sentence.categoryId === c.id;
+                              }).length;
+                              return (
+                                <option key={c.id} value={c.id}>{c.name} ({count})</option>
+                              );
+                            })}
+                          </select>
+                        </div>
+
+                        <div className="space-y-1">
+                          <label className="block text-[10px] font-black text-slate-400 uppercase tracking-wider mb-1.5 flex items-center gap-1">
+                            <Zap size={11} className="text-orange-500 fill-orange-555" />
+                            Chọn mức độ khó:
+                          </label>
+                          <select
+                            value={vocabSelectedDifficulty}
+                            onChange={(e) => setVocabSelectedDifficulty(e.target.value)}
+                            className="w-full text-xs font-bold p-3 border border-slate-200/80 rounded-2xl focus:outline-none focus:ring-4 focus:ring-orange-500/10 focus:border-orange-500 bg-slate-50 text-slate-700 cursor-pointer transition-all"
+                          >
+                            <option value="all">Tất cả mức độ</option>
+                            <option value="basic">⭐ Cơ bản</option>
+                            <option value="easy">⭐⭐ Dễ</option>
+                            <option value="medium">⭐⭐⭐ Trung bình</option>
+                            <option value="hard">⭐⭐⭐⭐ Khó</option>
+                          </select>
+                        </div>
+                      </div>
                     </div>
-                    <h3 className="text-xl font-bold text-slate-800 mb-3">Kiểm tra Từ vựng</h3>
-                    <p className="text-slate-500 text-xs md:text-sm mb-6 leading-relaxed">Ôn tập các từ vựng và cấu trúc bạn đã lưu trong quá trình học. Thử thách trí nhớ với flashcards.</p>
-                  </div>
-                  <div className="flex items-center gap-2 text-orange-500 font-bold text-sm group-hover:gap-4 transition-all">
-                    Bắt đầu ngay <ChevronRight size={16} />
-                  </div>
-                </motion.div>
+                    <div className="flex items-center gap-2 text-orange-500 font-bold text-sm group-hover:gap-4 transition-all mt-6">
+                      Bắt đầu ngay <ChevronRight size={16} />
+                    </div>
+                  </motion.div>
 
                 {/* Grammar Test Card */}
                 <motion.div 
@@ -1609,14 +2584,81 @@ export default function App() {
                   onClick={() => startQuiz()}
                   className="bg-white p-6 md:p-8 rounded-[2.5rem] border-2 border-slate-100 shadow-xl shadow-slate-200/50 cursor-pointer group hover:border-primary/30 transition-all flex flex-col justify-between"
                 >
-                  <div>
+                  <div className="w-full">
                     <div className="w-14 h-14 bg-emerald-50 rounded-2xl flex items-center justify-center mb-6 group-hover:scale-110 transition-transform">
                       <Zap size={28} className="text-primary fill-primary" />
                     </div>
-                    <h3 className="text-xl font-bold text-slate-800 mb-3">Thử thách Ngôn ngữ</h3>
-                    <p className="text-slate-500 text-xs md:text-sm mb-6 leading-relaxed">Dịch câu trong 15 giây. Luyện tập phản xạ nhanh giữa Tiếng Việt và Tiếng Trung.</p>
+                    <h3 className="text-xl font-bold text-slate-800 mb-2">Thử thách Ngôn ngữ</h3>
+                    <p className="text-slate-500 text-xs md:text-sm mb-4 leading-relaxed">Dịch câu trong 15 giây. Luyện tập phản xạ dịch nhanh giữa Tiếng Việt và Tiếng Trung.</p>
+                    
+                    {/* Category Selection Dropdown inside card */}
+                    <div className="mt-4 text-left space-y-3" onClick={(e) => e.stopPropagation()}>
+                      <div className="space-y-1">
+                        <label className="block text-[10px] font-black text-slate-400 uppercase tracking-wider mb-1.5 flex items-center gap-1">
+                          <Bookmark size={11} className="text-emerald-500 fill-emerald-50" />
+                          Chọn chủ đề học tập:
+                        </label>
+                        <select
+                          value={grammarSelectedCategory}
+                          onChange={(e) => setGrammarSelectedCategory(e.target.value)}
+                          className="w-full text-xs font-bold p-3 border border-slate-200/80 rounded-2xl focus:outline-none focus:ring-4 focus:ring-primary/10 focus:border-primary bg-slate-50 text-slate-700 cursor-pointer transition-all"
+                        >
+                          <option value="all">Tất cả chủ đề ({savedSentences.length})</option>
+                          {categories.map((c) => {
+                            const count = savedSentences.filter(s => s.categoryId === c.id).length;
+                            return (
+                              <option key={c.id} value={c.id}>{c.name} ({count})</option>
+                            );
+                          })}
+                        </select>
+                      </div>
+
+                      <div className="space-y-1">
+                        <label className="block text-[10px] font-black text-slate-400 uppercase tracking-wider mb-1.5 flex items-center gap-1">
+                          <Zap size={11} className="text-emerald-500 fill-emerald-50" />
+                          Chọn mức độ khó:
+                        </label>
+                        <select
+                          value={grammarSelectedDifficulty}
+                          onChange={(e) => setGrammarSelectedDifficulty(e.target.value)}
+                          className="w-full text-xs font-bold p-3 border border-slate-200/80 rounded-2xl focus:outline-none focus:ring-4 focus:ring-primary/10 focus:border-primary bg-slate-50 text-slate-700 cursor-pointer transition-all"
+                        >
+                          <option value="all">Tất cả mức độ</option>
+                          <option value="basic">⭐ Cơ bản</option>
+                          <option value="easy">⭐⭐ Dễ</option>
+                          <option value="medium">⭐⭐⭐ Trung bình</option>
+                          <option value="hard">⭐⭐⭐⭐ Khó</option>
+                        </select>
+                      </div>
+                    </div>
+
+                    {/* Mode Selection */}
+                    <div className="mt-4 flex gap-2" onClick={(e) => e.stopPropagation()}>
+                      <button
+                        type="button"
+                        onClick={() => setQuizMode('zh2vi')}
+                        className={`flex-1 py-2 px-2 rounded-xl text-[10px] font-black tracking-wider uppercase border transition-all cursor-pointer ${
+                          quizMode === 'zh2vi'
+                            ? 'bg-primary border-primary text-white shadow-sm shadow-emerald-200'
+                            : 'bg-white border-slate-200 text-slate-500 hover:text-slate-700 hover:bg-slate-50'
+                        }`}
+                      >
+                        Trung ➔ Việt
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setQuizMode('vi2zh')}
+                        className={`flex-1 py-2 px-2 rounded-xl text-[10px] font-black tracking-wider uppercase border transition-all cursor-pointer ${
+                          quizMode === 'vi2zh'
+                            ? 'bg-primary border-primary text-white shadow-sm shadow-emerald-200'
+                            : 'bg-white border-slate-200 text-slate-500 hover:text-slate-700 hover:bg-slate-50'
+                        }`}
+                      >
+                        Việt ➔ Trung
+                      </button>
+                    </div>
                   </div>
-                  <div className="flex items-center gap-2 text-primary font-bold text-sm group-hover:gap-4 transition-all">
+                  <div className="flex items-center gap-2 text-primary font-bold text-sm group-hover:gap-4 transition-all mt-6">
                     Bắt đầu ngay <ChevronRight size={16} />
                   </div>
                 </motion.div>
@@ -1627,32 +2669,263 @@ export default function App() {
                   onClick={() => startWordOrderQuiz()}
                   className="bg-white p-6 md:p-8 rounded-[2.5rem] border-2 border-slate-100 shadow-xl shadow-slate-200/50 cursor-pointer group hover:border-indigo-500/30 transition-all flex flex-col justify-between"
                 >
-                  <div>
+                  <div className="w-full">
                     <div className="w-14 h-14 bg-indigo-50 rounded-2xl flex items-center justify-center mb-6 group-hover:scale-110 transition-transform">
                       <Sparkles size={28} className="text-indigo-600 fill-indigo-600" />
                     </div>
                     <h3 className="text-xl font-bold text-slate-800 mb-3">Sắp xếp Trật tự Từ</h3>
-                    <p className="text-slate-500 text-xs md:text-sm mb-6 leading-relaxed">Sắp xếp các mảnh từ, chữ Hán thành câu hoàn chỉnh dựa trên câu dịch nghĩa tiếng Việt.</p>
+                    <p className="text-slate-500 text-xs md:text-sm mb-4 leading-relaxed">Sắp xếp các mảnh từ, chữ Hán thành câu hoàn chỉnh dựa trên câu dịch nghĩa tiếng Việt.</p>
+
+                    {/* Category Selection Dropdown inside card */}
+                    <div className="mt-4 text-left space-y-3" onClick={(e) => e.stopPropagation()}>
+                      <div className="space-y-1">
+                        <label className="block text-[10px] font-black text-slate-400 uppercase tracking-wider mb-1.5 flex items-center gap-1">
+                          <Bookmark size={11} className="text-indigo-500 fill-indigo-100" />
+                          Chọn chủ đề học tập:
+                        </label>
+                        <select
+                          value={wordOrderSelectedCategory}
+                          onChange={(e) => setWordOrderSelectedCategory(e.target.value)}
+                          className="w-full text-xs font-bold p-3 border border-slate-200/80 rounded-2xl focus:outline-none focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-500 bg-slate-50 text-slate-700 cursor-pointer transition-all"
+                        >
+                          <option value="all">Tất cả chủ đề ({savedSentences.length})</option>
+                          {categories.map((c) => {
+                            const count = savedSentences.filter(s => s.categoryId === c.id).length;
+                            return (
+                              <option key={c.id} value={c.id}>{c.name} ({count})</option>
+                            );
+                          })}
+                        </select>
+                      </div>
+
+                      <div className="space-y-1">
+                        <label className="block text-[10px] font-black text-slate-400 uppercase tracking-wider mb-1.5 flex items-center gap-1">
+                          <Zap size={11} className="text-indigo-500" />
+                          Chọn mức độ khó:
+                        </label>
+                        <select
+                          value={wordOrderSelectedDifficulty}
+                          onChange={(e) => setWordOrderSelectedDifficulty(e.target.value)}
+                          className="w-full text-xs font-bold p-3 border border-slate-200/80 rounded-2xl focus:outline-none focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-500 bg-slate-50 text-slate-700 cursor-pointer transition-all"
+                        >
+                          <option value="all">Tất cả mức độ</option>
+                          <option value="basic">⭐ Cơ bản</option>
+                          <option value="easy">⭐⭐ Dễ</option>
+                          <option value="medium">⭐⭐⭐ Trung bình</option>
+                          <option value="hard">⭐⭐⭐⭐ Khó</option>
+                        </select>
+                      </div>
+                    </div>
                   </div>
-                  <div className="flex items-center gap-2 text-indigo-600 font-bold text-sm group-hover:gap-4 transition-all">
+                  <div className="flex items-center gap-2 text-indigo-600 font-bold text-sm group-hover:gap-4 transition-all mt-6">
                     Bắt đầu ngay <ChevronRight size={16} />
                   </div>
                 </motion.div>
               </div>
 
-              {savedSentences.length === 0 && vocabulary.length === 0 && (
-                <div className="bg-amber-50 border border-amber-200 p-6 rounded-3xl text-center">
-                  <p className="text-amber-700 font-bold">Bạn chưa có dữ liệu học tập!</p>
-                  <p className="text-amber-600/80 text-sm">Hãy ra trang "Bài học" và lưu một vài câu hoặc từ vựng để bắt đầu kiểm tra.</p>
+              {/* Statistics & Sổ tay từ vựng / ngữ pháp đã lưu panel */}
+              {vocabulary.length > 0 && (
+                <div className="bg-white p-5 md:p-8 rounded-[2rem] border border-slate-100 shadow-xl shadow-slate-100/30 space-y-5 md:space-y-6 mt-8">
+                  {/* Panel Header */}
+                  <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-4 border-b border-slate-100">
+                    <div className="space-y-1 text-left">
+                      <h3 className="text-lg md:text-xl font-black text-slate-800 flex items-center gap-2">
+                        <BookOpen className="text-orange-500" size={20} /> Sổ tay học tập (Từ vựng & Ngữ pháp)
+                      </h3>
+                      <p className="text-[11px] md:text-xs text-slate-500 font-medium font-sans">Tổng hợp các kiến thức bạn đã bôi đen và ghi nhớ.</p>
+                    </div>
+
+                    {/* Quick filters counter badges */}
+                    <div className="flex flex-wrap items-center gap-1.5 md:gap-2">
+                      <span className="px-2.5 py-1 bg-slate-50 border border-slate-100 rounded-lg text-[9px] font-black text-slate-600 tracking-wider uppercase">
+                        Tất cả: <span className="font-black text-slate-900 ml-1">{vocabulary.length}</span>
+                      </span>
+                      <span className="px-2.5 py-1 bg-emerald-50/50 border border-emerald-100/30 rounded-lg text-[9px] font-black text-emerald-600 tracking-wider uppercase">
+                        Từ vựng: <span className="font-black text-emerald-800 ml-1">{vocabulary.filter(v => v.type === 'word').length}</span>
+                      </span>
+                      <span className="px-2.5 py-1 bg-indigo-50/50 border border-indigo-100/30 rounded-lg text-[9px] font-black text-indigo-600 tracking-wider uppercase">
+                        Ngữ pháp: <span className="font-black text-indigo-800 ml-1">{vocabulary.filter(v => v.type === 'grammar').length}</span>
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Search, Filter Action Bar */}
+                  <div className="flex flex-col md:flex-row gap-2.5">
+                    <div className="flex-1 relative">
+                      <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" size={14} />
+                      <input 
+                        type="text" 
+                        value={vocabSearchQuery}
+                        onChange={(e) => setVocabSearchQuery(e.target.value)}
+                        placeholder="Tìm kiếm cụm từ đã lưu..."
+                        className="w-full pl-9 pr-8 py-2.5 bg-slate-50 border border-slate-100 rounded-xl text-xs font-bold outline-none focus:bg-white focus:ring-4 focus:ring-primary/10 focus:border-primary transition-all shadow-none placeholder:text-slate-400 text-slate-700"
+                      />
+                      {vocabSearchQuery && (
+                        <button 
+                          onClick={() => setVocabSearchQuery('')}
+                          className="absolute right-3.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 text-xs font-black cursor-pointer"
+                        >
+                          ×
+                        </button>
+                      )}
+                    </div>
+
+                    <div className="flex gap-1 overflow-x-auto pb-0.5 md:pb-0 scrollbar-none shrink-0">
+                      <button 
+                        onClick={() => setVocabFilterType('all')}
+                        className={`px-3 py-2 border rounded-xl text-[10px] font-black uppercase tracking-wider cursor-pointer transition-all duration-150
+                          ${vocabFilterType === 'all' 
+                            ? 'bg-slate-800 border-slate-800 text-white shadow-sm' 
+                            : 'bg-slate-50 border-slate-100 text-slate-500 hover:bg-slate-100'}
+                        `}
+                      >
+                        Tất cả
+                      </button>
+                      <button 
+                        onClick={() => setVocabFilterType('word')}
+                        className={`px-3 py-2 border rounded-xl text-[10px] font-black uppercase tracking-wider cursor-pointer transition-all duration-150
+                          ${vocabFilterType === 'word' 
+                            ? 'bg-emerald-600 border-emerald-600 text-white shadow-sm' 
+                            : 'bg-emerald-50/25 border-emerald-100/20 text-emerald-700 hover:bg-emerald-50'}
+                        `}
+                      >
+                        Từ mới
+                      </button>
+                      <button 
+                        onClick={() => setVocabFilterType('grammar')}
+                        className={`px-3 py-2 border rounded-xl text-[10px] font-black uppercase tracking-wider cursor-pointer transition-all duration-150
+                          ${vocabFilterType === 'grammar' 
+                            ? 'bg-indigo-600 border-indigo-600 text-white shadow-sm' 
+                            : 'bg-indigo-50/25 border-indigo-100/20 text-indigo-700 hover:bg-indigo-50'}
+                        `}
+                      >
+                        Ngữ pháp
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* List of vocabulary contents */}
+                  {vocabulary.filter(v => {
+                    const matchesSearch = v.word.toLowerCase().includes(vocabSearchQuery.toLowerCase());
+                    const matchesType = vocabFilterType === 'all' || v.type === vocabFilterType;
+                    return matchesSearch && matchesType;
+                  }).length === 0 ? (
+                    <div className="py-10 text-center rounded-2xl bg-slate-50 border border-dashed border-slate-200">
+                      <p className="text-slate-400 font-bold text-xs font-sans">Không tìm thấy từ học tập nào trùng khớp.</p>
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
+                      {vocabulary.filter(v => {
+                        const matchesSearch = v.word.toLowerCase().includes(vocabSearchQuery.toLowerCase());
+                        const matchesType = vocabFilterType === 'all' || v.type === vocabFilterType;
+                        return matchesSearch && matchesType;
+                      }).map((v) => {
+                        const isExpanded = expandedVocabId === v.id;
+                        const matchSentence = savedSentences.find(s => s.id === v.sentenceId);
+                        
+                        return (
+                          <div 
+                            key={v.id}
+                            className={`border rounded-2xl p-3.5 transition-all duration-200 text-left flex flex-col justify-between ${
+                              isExpanded 
+                                ? 'sm:col-span-2 md:col-span-3 bg-slate-50 border-slate-200/80 shadow-md ring-4 ring-slate-100/30' 
+                                : v.type === 'grammar' 
+                                  ? 'bg-indigo-50/5 hover:bg-indigo-50/20 border-indigo-50 hover:border-indigo-100/60' 
+                                  : 'bg-emerald-50/5 hover:bg-emerald-50/20 border-emerald-50 hover:border-emerald-100/60'
+                            }`}
+                          >
+                            <div className="flex items-start justify-between gap-3">
+                              {/* Main Word or grammar click to expand */}
+                              <div 
+                                onClick={() => setExpandedVocabId(isExpanded ? null : v.id)}
+                                className="flex-1 cursor-pointer focus:outline-none"
+                              >
+                                <div className="flex items-center gap-1.5 flex-wrap">
+                                  <span className={`text-[8px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded-md ${
+                                    v.type === 'grammar' 
+                                      ? 'bg-indigo-100 text-indigo-700' 
+                                      : 'bg-emerald-100 text-emerald-700'
+                                  }`}>
+                                    {v.type === 'grammar' ? 'Ngữ pháp' : 'Từ vựng'}
+                                  </span>
+                                  {matchSentence && (
+                                    <span className="text-[9px] font-bold text-slate-400 hover:text-slate-600 underline">
+                                      {isExpanded ? 'Thu gọn' : 'Xem ngữ cảnh gốc'}
+                                    </span>
+                                  )}
+                                </div>
+                                <h4 className="text-lg md:text-xl font-black text-slate-800 mt-1 pb-1 tracking-wide">
+                                  {v.word}
+                                </h4>
+                              </div>
+
+                              {/* Small Quick Actions */}
+                              <div className="flex items-center gap-1 shrink-0">
+                                <button 
+                                  onClick={(e) => { e.stopPropagation(); handleSpeak(v.word, false); }}
+                                  title="Phát âm thường (1x)"
+                                  className="p-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-600 transition-colors cursor-pointer"
+                                >
+                                  <Volume2 size={12} />
+                                </button>
+                                <button 
+                                  onClick={(e) => { e.stopPropagation(); handleSpeak(v.word, true); }}
+                                  title="Phát âm chậm (0.5x)"
+                                  className="p-1.5 rounded-lg bg-amber-50 hover:bg-amber-100 text-amber-600 transition-colors cursor-pointer text-xs font-bold leading-none"
+                                >
+                                  🐢
+                                </button>
+                                <button 
+                                  type="button"
+                                  onClick={(e) => handleDeleteVocabulary(e, v.id, v.word)}
+                                  title="Xóa khỏi sổ tay"
+                                  className="p-1.5 rounded-lg bg-red-50 hover:bg-red-100 text-red-500 transition-colors cursor-pointer"
+                                >
+                                  <Trash2 size={12} />
+                                </button>
+                              </div>
+                            </div>
+
+                            {/* Expanded Context block */}
+                            {isExpanded && matchSentence && (
+                              <div className="mt-3 pt-3 border-t border-slate-200 w-full grid grid-cols-1 md:grid-cols-12 gap-3 animate-in fade-in duration-200">
+                                <div className="md:col-span-8 space-y-1">
+                                  <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Ngữ cảnh gốc bài học</p>
+                                  <p className="text-base font-bold text-slate-800 tracking-[0.05em] leading-relaxed">
+                                    {renderHighlightedChinese(matchSentence.chinese, matchSentence.id)}
+                                  </p>
+                                  <p className="text-xs text-slate-400 italic font-medium">{matchSentence.pinyin}</p>
+                                  <p className="text-xs md:text-sm text-slate-600 font-semibold">{matchSentence.meaning}</p>
+                                </div>
+
+                                <div className="md:col-span-4 flex items-end justify-end">
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setResult(matchSentence);
+                                      setActiveView('learn');
+                                    }}
+                                    className="w-full md:w-auto px-3.5 py-2 text-[10px] font-black uppercase tracking-wider text-white bg-slate-800 hover:bg-slate-900 rounded-xl transition duration-150 flex items-center justify-center gap-1 shadow-sm"
+                                  >
+                                    <BookOpen size={12} /> Chi tiết bài học
+                                  </button>
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
                 </div>
               )}
             </div>
           ) : (
             /* Active Test Interface */
-            <div className={`${testType === 'word-order' ? 'max-w-6xl' : 'max-w-2xl'} mx-auto w-full py-6`}>
+            <div className={`${testType === 'word-order' ? 'max-w-6xl' : 'max-w-2xl'} mx-auto w-full py-2 md:py-6 px-2 md:px-0`}>
               <button 
                 onClick={() => setTestType(null)}
-                className="mb-8 flex items-center gap-2 text-slate-400 hover:text-slate-600 font-bold transition-colors"
+                className="mb-3 md:mb-8 flex items-center gap-2 text-slate-400 hover:text-slate-600 font-bold transition-colors text-xs md:text-base"
               >
                 <ChevronRight size={18} className="rotate-180" /> Quay lại danh sách test
               </button>
@@ -1665,30 +2938,45 @@ export default function App() {
                     initial={{ opacity: 0, scale: 0.95 }}
                     animate={{ opacity: 1, scale: 1 }}
                     exit={{ opacity: 0, scale: 0.95 }}
-                    className="sleek-card min-h-[500px] flex flex-col items-center justify-center text-center relative overflow-hidden bg-white"
+                    className="sleek-card p-4 md:p-8 min-h-[350px] md:min-h-[500px] flex flex-col items-center justify-center text-center relative overflow-hidden bg-white"
                   >
                     {/* Question Section */}
-                    <div className="mb-8 md:mb-12 w-full px-4 md:px-6">
-                      <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">
-                        {quizMode === 'zh2vi' ? 'Dịch sang Tiếng Việt' : 'Dịch sang Tiếng Trung'}
-                      </p>
-                      <h3 className={`text-4xl md:text-7xl font-bold text-primary leading-tight flex flex-wrap items-center justify-center gap-3 ${quizMode === 'zh2vi' ? 'tracking-[0.1em]' : ''}`}>
+                    <div className="mb-4 md:mb-12 w-full px-2 md:px-6">
+                      <div className="flex flex-wrap items-center justify-center gap-1.5 mb-2 md:mb-4">
+                        <span className="text-[9px] md:text-[10px] font-black text-emerald-800 bg-emerald-50 border border-emerald-100/80 px-2.5 py-0.5 md:py-1 rounded-full uppercase tracking-wider">
+                          Chủ đề: {categories.find(c => c.id === quizSentence?.categoryId)?.name || 'Chưa phân loại'}
+                        </span>
+                        <span className="text-[9px] md:text-[10px] font-black text-slate-600 bg-slate-50 border border-slate-200/60 px-2.5 py-0.5 md:py-1 rounded-full uppercase tracking-wider">
+                          {quizMode === 'zh2vi' ? 'Trung ➔ Việt' : 'Việt ➔ Trung'}
+                        </span>
+                      </div>
+                      <h3 className={`text-xl md:text-5xl lg:text-7xl font-bold text-primary leading-tight flex flex-wrap items-center justify-center gap-2 ${quizMode === 'zh2vi' ? 'tracking-[0.05em] md:tracking-[0.1em]' : ''}`}>
                         {quizMode === 'zh2vi' ? quizSentence?.chinese : quizSentence?.originalText}
                         {quizMode === 'zh2vi' && (
-                          <button 
-                            onClick={(e) => { e.stopPropagation(); handleSpeak(quizSentence?.chinese || ''); }}
-                            className="p-1.5 md:p-2 bg-indigo-50 text-indigo-500 rounded-full hover:bg-indigo-100 transition-colors"
-                          >
-                            <Volume2 size={24} className="md:w-8 md:h-8" />
-                          </button>
+                          <div className="flex items-center gap-1.5">
+                            <button 
+                              onClick={(e) => { e.stopPropagation(); handleSpeak(quizSentence?.chinese || '', false); }}
+                              title="Nghe thường (1.0x)"
+                              className="p-1.5 md:p-2 bg-indigo-50 text-indigo-500 rounded-full hover:bg-indigo-100 transition-colors cursor-pointer"
+                            >
+                              <Volume2 size={18} className="md:w-6 md:h-6" />
+                            </button>
+                            <button 
+                              onClick={(e) => { e.stopPropagation(); handleSpeak(quizSentence?.chinese || '', true); }}
+                              title="Nghe chậm (0.5x)"
+                              className="p-1.5 md:p-2 bg-amber-50 text-amber-600 rounded-full hover:bg-amber-100 transition-colors cursor-pointer flex items-center justify-center"
+                            >
+                              <span className="text-sm md:text-lg">🐢</span>
+                            </button>
+                          </div>
                         )}
                       </h3>
                     </div>
 
                     {quizStage === 'running' ? (
                       <div className="flex flex-col items-center">
-                        <div className="relative w-32 h-32 mb-8 flex items-center justify-center">
-                          <svg className="absolute inset-0 w-full h-full -rotate-90">
+                        <div className="relative w-24 h-24 md:w-32 md:h-32 mb-4 md:mb-8 flex items-center justify-center">
+                          <svg viewBox="0 0 128 128" className="absolute inset-0 w-full h-full -rotate-90">
                             <circle 
                               cx="64" cy="64" r="60" 
                               className="stroke-slate-100 fill-none" 
@@ -1702,9 +2990,9 @@ export default function App() {
                               strokeDashoffset={`${(2 * Math.PI * 60) * (1 - quizTimer / 15)}`}
                             />
                           </svg>
-                          <span className="text-5xl font-black text-orange-500">{quizTimer}</span>
+                          <span className="text-3xl md:text-5xl font-black text-orange-500">{quizTimer}</span>
                         </div>
-                        <p className="text-xl font-bold text-slate-500">
+                        <p className="text-sm md:text-xl font-bold text-slate-500">
                           {quizTimer > 0 ? (quizMode === 'zh2vi' ? 'Hãy nhớ nghĩa câu này!' : 'Dịch câu này sang tiếng Trung!') : 'Hết giờ! Đang hiển thị kết quả...'}
                         </p>
                         <button 
@@ -1712,7 +3000,7 @@ export default function App() {
                             setQuizTimer(0);
                             setQuizStage('revealed');
                           }}
-                          className="mt-8 px-8 py-3 bg-slate-100 text-slate-600 rounded-2xl font-bold hover:bg-slate-200 transition-all"
+                          className="mt-4 md:mt-8 px-6 py-2 bg-slate-100 text-slate-600 rounded-xl md:rounded-2xl font-bold hover:bg-slate-200 transition-all text-xs md:text-sm"
                         >
                           Hiện đáp án sớm
                         </button>
@@ -1721,34 +3009,44 @@ export default function App() {
                       <motion.div 
                         initial={{ opacity: 0, y: 20 }}
                         animate={{ opacity: 1, y: 0 }}
-                        className="space-y-6 w-full px-6"
+                        className="space-y-4 md:space-y-6 w-full px-1 md:px-6"
                       >
-                        <div className={`p-8 rounded-[2rem] border-2 ${quizMode === 'zh2vi' ? 'bg-indigo-50 border-indigo-100' : 'bg-emerald-50 border-emerald-100'}`}>
-                          <p className="text-xs font-bold text-primary uppercase tracking-widest mb-4">Đáp án chính xác</p>
+                        <div className={`p-4 md:p-8 rounded-2xl md:rounded-[2rem] border-2 ${quizMode === 'zh2vi' ? 'bg-indigo-50 border-indigo-100' : 'bg-emerald-50 border-emerald-100'}`}>
+                          <p className="text-[10px] md:text-xs font-bold text-primary uppercase tracking-widest mb-2 md:mb-4">Đáp án chính xác</p>
                           {quizMode === 'zh2vi' ? (
-                            <h3 className="text-3xl md:text-4xl font-bold text-slate-800 leading-tight">
+                            <h3 className="text-lg md:text-3xl lg:text-4xl font-bold text-slate-800 leading-tight">
                               {quizSentence?.originalText}
                             </h3>
                           ) : (
                             <>
-                              <div className="flex items-center justify-center gap-3 mb-4">
-                                <h3 className="text-5xl md:text-7xl font-bold text-slate-800 tracking-[0.12em]">{quizSentence?.chinese}</h3>
-                                <button 
-                                  onClick={() => handleSpeak(quizSentence?.chinese || '')}
-                                  className="p-3 bg-emerald-100 text-emerald-600 rounded-full hover:bg-emerald-200 transition-colors"
-                                >
-                                  <Volume2 size={32} />
-                                </button>
+                              <div className="flex items-center justify-center gap-2 mb-2 md:mb-4">
+                                <h3 className="text-2xl md:text-5xl lg:text-7xl font-bold text-slate-800 tracking-[0.05em] md:tracking-[0.12em]">{quizSentence?.chinese}</h3>
+                                <div className="flex items-center gap-1.5">
+                                  <button 
+                                    onClick={() => handleSpeak(quizSentence?.chinese || '', false)}
+                                    title="Nghe thường (1.0x)"
+                                    className="p-1.5 bg-emerald-100 text-emerald-600 rounded-full hover:bg-emerald-200 transition-colors cursor-pointer flex items-center justify-center"
+                                  >
+                                    <Volume2 size={20} className="md:w-6 md:h-6" />
+                                  </button>
+                                  <button 
+                                    onClick={() => handleSpeak(quizSentence?.chinese || '', true)}
+                                    title="Nghe chậm (0.5x)"
+                                    className="p-1.5 bg-amber-50 text-amber-600 rounded-full hover:bg-amber-100 transition-colors cursor-pointer flex items-center justify-center"
+                                  >
+                                    <span className="text-sm md:text-lg">🐢</span>
+                                  </button>
+                                </div>
                               </div>
-                              <p className="text-2xl text-slate-500 italic font-medium">{quizSentence?.pinyin}</p>
+                              <p className="text-sm md:text-2xl text-slate-500 italic font-medium">{quizSentence?.pinyin}</p>
                             </>
                           )}
                         </div>
                         
-                        <div className="flex gap-4 max-w-md mx-auto w-full">
+                        <div className="flex gap-3 md:gap-4 max-w-xs md:max-w-md mx-auto w-full">
                           <button 
                             onClick={() => startQuiz()}
-                            className="flex-1 py-4 bg-primary text-white rounded-2xl font-bold text-lg shadow-[0_4px_0_#065f46] hover:bg-primary-dark active:translate-y-1 active:shadow-none transition-all"
+                            className="flex-1 py-2.5 md:py-4 bg-primary text-white rounded-xl md:rounded-2xl font-bold text-sm md:text-lg shadow-[0_3px_0_#065f46] md:shadow-[0_4px_0_#065f46] hover:bg-primary-dark active:translate-y-1 active:shadow-none transition-all"
                           >
                             Tiếp theo
                           </button>
@@ -1763,30 +3061,40 @@ export default function App() {
                     initial={{ opacity: 0, scale: 0.95 }}
                     animate={{ opacity: 1, scale: 1 }}
                     exit={{ opacity: 0, scale: 0.95 }}
-                    className="sleek-card min-h-[500px] flex flex-col items-center justify-center text-center bg-white"
+                    className="sleek-card p-4 md:p-8 min-h-[350px] md:min-h-[500px] flex flex-col items-center justify-center text-center bg-white"
                   >
-                    <div className="mb-8 md:mb-12 w-full px-4 md:px-6">
-                      <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-4">Bạn có nhớ từ này không?</p>
-                      <div className="flex flex-wrap items-center justify-center gap-4">
-                        <h3 className={`text-6xl md:text-9xl font-black leading-tight tracking-[0.1em] ${quizWord?.type === 'grammar' ? 'text-indigo-600' : 'text-orange-600'}`}>
+                    <div className="mb-4 md:mb-12 w-full px-2 md:px-6">
+                      <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 md:mb-4">Bạn có nhớ từ này không?</p>
+                      <div className="flex flex-wrap items-center justify-center gap-2 md:gap-4">
+                        <h3 className={`text-4xl md:text-8xl lg:text-9xl font-black leading-tight tracking-[0.05em] md:tracking-[0.1em] ${quizWord?.type === 'grammar' ? 'text-indigo-600' : 'text-orange-600'}`}>
                           {quizWord?.word}
                         </h3>
-                        <button 
-                          onClick={() => handleSpeak(quizWord?.word || '')}
-                          className={`p-3 md:p-4 rounded-full transition-colors ${quizWord?.type === 'grammar' ? 'bg-indigo-50 text-indigo-500 hover:bg-indigo-100' : 'bg-orange-50 text-orange-500 hover:bg-orange-100'}`}
-                        >
-                          <Volume2 size={32} className="md:w-10 md:h-10" />
-                        </button>
+                        <div className="flex items-center gap-2">
+                          <button 
+                            onClick={() => handleSpeak(quizWord?.word || '', false)}
+                            title="Nghe thường"
+                            className={`p-1.5 md:p-4 rounded-full transition-colors cursor-pointer ${quizWord?.type === 'grammar' ? 'bg-indigo-50 text-indigo-500 hover:bg-indigo-100' : 'bg-orange-50 text-orange-500 hover:bg-orange-100'}`}
+                          >
+                            <Volume2 size={20} className="md:w-10 md:h-10" />
+                          </button>
+                          <button 
+                            onClick={() => handleSpeak(quizWord?.word || '', true)}
+                            title="Nghe chậm"
+                            className="p-1.5 md:p-4 rounded-full transition-colors bg-amber-50 text-amber-600 hover:bg-amber-100 cursor-pointer flex items-center justify-center border border-amber-200/50"
+                          >
+                            <span className="text-xl md:text-3xl">🐢</span>
+                          </button>
+                        </div>
                       </div>
-                      <div className="mt-4">
-                        <span className={`px-4 py-1.5 rounded-full text-[10px] font-bold uppercase tracking-wider ${quizWord?.type === 'grammar' ? 'bg-indigo-100 text-indigo-700' : 'bg-orange-100 text-orange-700'}`}>
+                      <div className="mt-2 md:mt-4">
+                        <span className={`px-3 py-1 md:px-4 md:py-1.5 rounded-full text-[9px] md:text-[10px] font-bold uppercase tracking-wider ${quizWord?.type === 'grammar' ? 'bg-indigo-100 text-indigo-700' : 'bg-orange-100 text-orange-700'}`}>
                           {quizWord?.type === 'grammar' ? 'Cấu trúc Ngữ pháp' : 'Từ vựng'}
                         </span>
                       </div>
                     </div>
 
                     {quizStage === 'running' ? (
-                      <div className="space-y-12 w-full px-8">
+                      <div className="space-y-4 md:space-y-12 w-full px-4 md:px-8">
                         <div className="flex flex-col items-center">
                           <button 
                             onClick={() => {
@@ -1797,14 +3105,14 @@ export default function App() {
                                 alert("Không tìm thấy ngữ cảnh câu ví dụ.");
                               }
                             }}
-                            className="bg-slate-50 text-slate-500 font-bold px-6 py-2 rounded-xl border border-slate-100 hover:bg-slate-100 transition-all flex items-center gap-2 mb-8"
+                            className="bg-slate-50 text-slate-500 font-bold px-4 py-1.5 md:px-6 md:py-2 rounded-xl border border-slate-100 hover:bg-slate-100 transition-all flex items-center gap-1.5 md:gap-2 mb-4 md:mb-8 text-xs md:text-sm"
                           >
-                            <Lightbulb size={18} className="text-amber-500" /> Xem gợi ý ngữ cảnh
+                            <Lightbulb size={16} className="text-amber-500" /> Xem gợi ý ngữ cảnh
                           </button>
                           
                           <button 
                             onClick={() => setQuizStage('revealed')}
-                            className="w-full max-w-md py-6 bg-slate-800 text-white rounded-3xl font-black text-2xl shadow-xl shadow-slate-200 hover:bg-slate-900 transition-all active:scale-[0.98]"
+                            className="w-full max-w-sm py-4 md:py-6 bg-slate-800 text-white rounded-2xl md:rounded-3xl font-black text-lg md:text-2xl shadow-xl shadow-slate-200 hover:bg-slate-900 transition-all active:scale-[0.98]"
                           >
                             XEM ĐÁP ÁN
                           </button>
@@ -1814,27 +3122,27 @@ export default function App() {
                       <motion.div 
                         initial={{ opacity: 0, y: 20 }}
                         animate={{ opacity: 1, y: 0 }}
-                        className="space-y-8 w-full px-6"
+                        className="space-y-4 md:space-y-8 w-full px-2 md:px-6"
                       >
-                        <div className={`p-8 rounded-[3rem] border-2 ${quizWord?.type === 'grammar' ? 'bg-indigo-50 border-indigo-100' : 'bg-orange-50 border-orange-100'}`}>
-                          <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-6">Ngữ cảnh & Ý nghĩa</p>
+                        <div className={`p-4 md:p-8 rounded-2xl md:rounded-[3rem] border-2 ${quizWord?.type === 'grammar' ? 'bg-indigo-50 border-indigo-100' : 'bg-orange-50 border-orange-100'}`}>
+                          <p className="text-[10px] md:text-xs font-bold text-slate-400 uppercase tracking-widest mb-3 md:mb-6">Ngữ cảnh & Ý nghĩa</p>
                           {savedSentences.find(s => s.id === quizWord?.sentenceId) ? (
-                            <div className="space-y-4">
-                              <p className="text-3xl md:text-4xl font-bold text-slate-800 leading-relaxed tracking-[0.12em]">
+                            <div className="space-y-2 md:space-y-4">
+                              <p className="text-xl md:text-3xl lg:text-4xl font-bold text-slate-800 leading-relaxed tracking-[0.05em] md:tracking-[0.12em]">
                                 {savedSentences.find(s => s.id === quizWord?.sentenceId)?.chinese}
                               </p>
-                              <p className="text-xl text-slate-500 italic">
+                              <p className="text-sm md:text-xl text-slate-500 italic font-medium">
                                 {savedSentences.find(s => s.id === quizWord?.sentenceId)?.originalText}
                               </p>
                             </div>
                           ) : (
-                            <p className="text-slate-500 italic">Dữ liệu câu ví dụ đã bị xóa hoặc không tồn tại.</p>
+                            <p className="text-slate-500 italic text-sm">Dữ liệu câu ví dụ đã bị xóa hoặc không tồn tại.</p>
                           )}
                         </div>
 
                         <button 
                           onClick={startVocabQuiz}
-                          className="w-full max-w-md py-5 bg-primary text-white rounded-[2rem] font-bold text-xl shadow-lg hover:bg-primary-dark transition-all"
+                          className="w-full max-w-sm py-3.5 md:py-5 bg-primary text-white rounded-xl md:rounded-[2rem] font-bold text-base md:text-xl shadow-lg hover:bg-primary-dark transition-all"
                         >
                           Từ tiếp theo
                         </button>
@@ -1848,14 +3156,14 @@ export default function App() {
                     initial={{ opacity: 0, scale: 0.97 }}
                     animate={{ opacity: 1, scale: 1 }}
                     exit={{ opacity: 0, scale: 0.97 }}
-                    className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start w-full"
+                    className="grid grid-cols-1 lg:grid-cols-12 gap-4 lg:gap-6 items-start w-full"
                   >
                     {/* Left Sidebar: List of available sentences */}
-                    <div className="lg:col-span-4 order-2 lg:order-1 space-y-4 w-full">
-                      <div className="sleek-card bg-white p-5 border border-slate-100 flex flex-col h-[525px]">
-                        <div className="flex items-center justify-between mb-3 border-b border-slate-50 pb-2">
-                          <h4 className="text-sm font-black text-slate-800 uppercase tracking-wider flex items-center gap-2">
-                            <BookOpen size={16} className="text-indigo-500" />
+                    <div className="lg:col-span-4 order-2 lg:order-1 space-y-3 w-full">
+                      <div className="sleek-card bg-white p-3 md:p-5 border border-slate-100 flex flex-col h-[280px] lg:h-[525px]">
+                        <div className="flex items-center justify-between mb-2 md:mb-3 border-b border-slate-50 pb-2">
+                          <h4 className="text-xs md:text-sm font-black text-slate-800 uppercase tracking-wider flex items-center gap-2">
+                            <BookOpen size={14} className="text-indigo-500" />
                             Danh sách câu hỏi ({
                               wordOrderSelectedCategory === 'all'
                                 ? savedSentences.length
@@ -1865,11 +3173,11 @@ export default function App() {
                         </div>
 
                         {/* Category Filter Tabs for Word Order */}
-                        <div className="flex gap-1.5 overflow-x-auto pb-3 mb-2 scrollbar-none snap-x cursor-pointer max-w-full">
+                        <div className="flex gap-1 overflow-x-auto pb-2 mb-2 scrollbar-none snap-x cursor-pointer max-w-full">
                           <button
                             type="button"
                             onClick={() => setWordOrderSelectedCategory('all')}
-                            className={`px-3 py-1.5 rounded-full text-[10px] font-bold shrink-0 transition-all duration-150 cursor-pointer ${
+                            className={`px-2.5 py-1 rounded-full text-[9px] md:text-[10px] font-bold shrink-0 transition-all duration-150 cursor-pointer ${
                               wordOrderSelectedCategory === 'all'
                                 ? 'bg-indigo-600 text-white shadow-sm'
                                 : 'bg-slate-50 hover:bg-slate-100 text-slate-500 hover:text-slate-800'
@@ -1884,7 +3192,7 @@ export default function App() {
                                 type="button"
                                 key={c.id}
                                 onClick={() => setWordOrderSelectedCategory(c.id)}
-                                className={`px-3 py-1.5 rounded-full text-[10px] font-bold shrink-0 transition-all duration-150 cursor-pointer ${
+                                className={`px-2.5 py-1 rounded-full text-[9px] md:text-[10px] font-bold shrink-0 transition-all duration-150 cursor-pointer ${
                                   wordOrderSelectedCategory === c.id
                                     ? 'bg-indigo-600 text-white shadow-sm'
                                     : 'bg-slate-50 hover:bg-slate-100 text-slate-500 hover:text-slate-800'
@@ -1896,7 +3204,7 @@ export default function App() {
                           })}
                         </div>
                         
-                        <div className="flex-1 overflow-y-auto pr-1 space-y-2.5 custom-scrollbar">
+                        <div className="flex-1 overflow-y-auto pr-1 space-y-2 custom-scrollbar">
                           {savedSentences
                             .filter(s => wordOrderSelectedCategory === 'all' ? true : s.categoryId === wordOrderSelectedCategory)
                             .map((s, idx) => {
@@ -1906,26 +3214,26 @@ export default function App() {
                                 <button
                                   key={`select-sentence-${s.id}`}
                                   onClick={() => startWordOrderQuiz(s)}
-                                  className={`w-full text-left p-3.5 rounded-2xl border transition-all duration-150 flex flex-col gap-1.5 focus:outline-none cursor-pointer ${
+                                  className={`w-full text-left p-2.5 md:p-3.5 rounded-xl md:rounded-2xl border transition-all duration-150 flex flex-col gap-1 focus:outline-none cursor-pointer ${
                                     isCurrent
                                       ? 'border-indigo-500 bg-indigo-50/40 shadow-sm border-2'
                                       : 'border-slate-100 bg-white hover:border-slate-200 hover:bg-slate-50'
                                   }`}
                                 >
                                   <div className="flex items-center justify-between w-full">
-                                    <span className="text-[10px] font-bold text-slate-400">
+                                    <span className="text-[9px] md:text-[10px] font-bold text-slate-400">
                                       Câu {idx + 1}
                                     </span>
                                     {category && (
-                                      <span className="text-[9px] px-1.5 py-0.5 rounded-md font-bold bg-indigo-50 border border-indigo-100 text-indigo-600">
+                                      <span className="text-[8px] md:text-[9px] px-1.5 py-0.5 rounded-md font-bold bg-indigo-50 border border-indigo-100 text-indigo-600">
                                         {category.name}
                                       </span>
                                     )}
                                   </div>
-                                  <p className={`text-sm font-extrabold ${isCurrent ? 'text-indigo-950 font-black' : 'text-slate-800'} line-clamp-2 leading-snug`}>
+                                  <p className={`text-xs md:text-sm font-extrabold ${isCurrent ? 'text-indigo-950 font-black' : 'text-slate-800'} line-clamp-1 md:line-clamp-2 leading-snug`}>
                                     {s.originalText || s.meaning}
                                   </p>
-                                  <p className="text-[11px] text-slate-500 font-medium truncate tracking-[0.08em]">
+                                  <p className="text-[10px] md:text-[11px] text-slate-500 font-medium truncate tracking-[0.05em] md:tracking-[0.08em]">
                                     {s.chinese}
                                   </p>
                                 </button>
@@ -1933,7 +3241,7 @@ export default function App() {
                             })}
                           
                           {savedSentences.filter(s => wordOrderSelectedCategory === 'all' ? true : s.categoryId === wordOrderSelectedCategory).length === 0 && (
-                            <div className="text-center py-12 text-slate-400 font-medium text-xs">
+                            <div className="text-center py-8 text-slate-400 font-medium text-xs">
                               Chưa có câu nào trong chủ đề này.
                             </div>
                           )}
@@ -1943,243 +3251,253 @@ export default function App() {
 
                     {/* Right column: Main Word Order Quiz UI Card */}
                     <div className="lg:col-span-8 order-1 lg:order-2 w-full">
-                      <div className="sleek-card min-h-[525px] flex flex-col justify-between bg-white p-6 md:p-8">
-                    {/* Header of Quiz */}
-                    <div className="w-full text-center space-y-3 mb-4">
-                      <span className="inline-block text-[10px] font-black text-indigo-500 uppercase tracking-widest bg-indigo-50 px-3 py-1.5 rounded-xl border border-indigo-100/50">
-                        Sắp xếp trật tự từ
-                      </span>
-                      <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">
-                        Ghép thành câu tiếng Trung chính xác cho ý nghĩa dưới đây:
-                      </p>
-                      <h4 className="text-xl md:text-2xl font-black text-slate-800 leading-normal max-w-xl mx-auto px-4">
-                        “ {quizSentence?.originalText || quizSentence?.meaning} ”
-                      </h4>
-                    </div>
-
-                    {/* Result and Canvas area */}
-                    <div className="w-full space-y-6">
-                      {/* Selected Area */}
-                      <div className="w-full min-h-[90px] border-2 border-dashed border-slate-200 rounded-[2rem] p-4 flex flex-wrap items-center justify-center gap-2 bg-slate-50/50">
-                        {selectedSegmentIndices.length === 0 ? (
-                          <p className="text-xs md:text-sm font-semibold text-slate-400 italic text-center">
-                            Bấm chọn các mảnh từ bên dưới theo thứ tự đúng...
+                      <div className="sleek-card min-h-[350px] lg:min-h-[525px] flex flex-col justify-between bg-white p-4 md:p-8">
+                        {/* Header of Quiz */}
+                        <div className="w-full text-center space-y-1.5 md:space-y-3 mb-3 md:mb-4">
+                          <span className="inline-block text-[9px] md:text-[10px] font-black text-indigo-500 uppercase tracking-widest bg-indigo-50 px-2.5 py-1 rounded-xl border border-indigo-100/50">
+                            Sắp xếp trật tự từ
+                          </span>
+                          <p className="text-[9px] md:text-xs font-bold text-slate-400 uppercase tracking-wider">
+                            Ghép thành câu tiếng Trung chính xác cho ý nghĩa dưới đây:
                           </p>
-                        ) : (
-                          selectedSegmentIndices.map((shuffledIdx, displayIdx) => {
-                            if (shuffledIdx === null) {
-                              const isFocused = focusedSlotIndex === displayIdx;
-                              return (
-                                <button
-                                  key={`empty-slot-${displayIdx}`}
-                                  type="button"
-                                  disabled={wordOrderResultState !== 'playing'}
-                                  onClick={() => setFocusedSlotIndex(displayIdx)}
-                                  className={`h-[42px] px-4 flex items-center justify-center rounded-xl border-2 border-dashed transition-all duration-150 cursor-pointer ${
-                                    isFocused
-                                      ? 'border-indigo-600 bg-indigo-50/70 text-indigo-750 shadow-md scale-105 animate-pulse font-bold'
-                                      : 'border-slate-300 bg-white hover:border-slate-400 hover:bg-slate-50 text-slate-400 text-xs font-semibold'
-                                  }`}
-                                >
-                                  {isFocused ? `Ô ${displayIdx + 1} ✎` : `Ô ${displayIdx + 1}`}
-                                </button>
-                              );
-                            }
-
-                            const segment = shuffledSegments[shuffledIdx];
-                            const isCorrectPos = wordOrderSegments[displayIdx] && segment.text === wordOrderSegments[displayIdx];
-                            
-                            let buttonClass = '';
-                            if (wordOrderResultState === 'playing') {
-                              buttonClass = isCorrectPos
-                                ? 'bg-emerald-50 text-emerald-800 border-emerald-300 hover:bg-emerald-100/80 hover:border-emerald-400 cursor-pointer'
-                                : 'bg-white hover:bg-slate-50 text-slate-800 border-slate-200 hover:border-indigo-400 cursor-pointer';
-                            } else if (wordOrderResultState === 'correct') {
-                              buttonClass = 'bg-emerald-500 text-white border-emerald-600 shadow-md shadow-emerald-100 cursor-default';
-                            } else { // incorrect
-                              buttonClass = isCorrectPos
-                                ? 'bg-emerald-50 text-emerald-800 border-emerald-300 opacity-95 cursor-default'
-                                : 'animate-blink-red border-rose-300 cursor-default';
-                            }
-
-                            return (
-                              <button
-                                key={`selected-${displayIdx}`}
-                                disabled={wordOrderResultState !== 'playing'}
-                                onClick={() => {
-                                  // Clear this slot and make it focused!
-                                  setSelectedSegmentIndices(prev => {
-                                    const next = [...prev];
-                                    next[displayIdx] = null;
-                                    return next;
-                                  });
-                                  setFocusedSlotIndex(displayIdx);
-                                }}
-                                className={`px-4 py-2 font-extrabold text-lg md:text-xl rounded-xl border shadow-sm transition-all animate-in zoom-in duration-100 ${buttonClass}`}
-                              >
-                                {segment.text}
-                              </button>
-                            );
-                          })
-                        )}
-                      </div>
-
-                      {/* Choices Area */}
-                      {wordOrderResultState === 'playing' ? (
-                        <div className="w-full flex flex-wrap items-center justify-center gap-2.5 pt-2">
-                          {shuffledSegments.map((segment, idx) => {
-                            const isSelected = selectedSegmentIndices.includes(idx);
-                            return (
-                              <button
-                                key={`shuffled-${segment.id}`}
-                                disabled={isSelected}
-                                onClick={() => {
-                                  setSelectedSegmentIndices(prev => {
-                                    const next = [...prev];
-                                    // If there is a manually focused slot and it is empty, put it there!
-                                    if (focusedSlotIndex !== null && focusedSlotIndex < next.length && next[focusedSlotIndex] === null) {
-                                      next[focusedSlotIndex] = idx;
-                                      // Proactively focus the next empty slot
-                                      const nextNull = next.indexOf(null);
-                                      setFocusedSlotIndex(nextNull !== -1 ? nextNull : null);
-                                      return next;
-                                    }
-
-                                    // Otherwise, fill the first available null slot
-                                    const firstNull = next.indexOf(null);
-                                    if (firstNull !== -1) {
-                                      next[firstNull] = idx;
-                                      // Focus the next empty slot
-                                      const nextNull = next.indexOf(null);
-                                      setFocusedSlotIndex(nextNull !== -1 ? nextNull : null);
-                                    }
-                                    return next;
-                                  });
-                                }}
-                                className={`px-4.5 py-2.5 font-extrabold text-lg md:text-xl rounded-xl border transition-all duration-150 cursor-pointer ${
-                                  isSelected
-                                    ? 'bg-slate-50 text-slate-300 border-slate-100 opacity-40 select-none cursor-default'
-                                    : 'bg-white text-slate-800 border-slate-200 shadow-sm hover:border-indigo-500 hover:shadow-md hover:scale-105 active:scale-95'
-                                }`}
-                              >
-                                {segment.text}
-                              </button>
-                            );
-                          })}
+                          <h4 className="text-base md:text-2xl font-black text-slate-800 leading-normal max-w-xl mx-auto px-2 md:px-4">
+                            “ {quizSentence?.originalText || quizSentence?.meaning} ”
+                          </h4>
                         </div>
-                      ) : (
-                        /* Correct or Incorrect Visual Feedbacks */
-                        <motion.div 
-                          initial={{ opacity: 0, y: 10 }}
-                          animate={{ opacity: 1, y: 0 }}
-                          className={`p-6 rounded-[2rem] border-2 text-center space-y-3 ${
-                            wordOrderResultState === 'correct' 
-                              ? 'bg-emerald-50 border-emerald-100 text-emerald-950' 
-                              : 'bg-rose-50 border-rose-100 text-rose-950'
-                          }`}
-                        >
-                          {wordOrderResultState === 'correct' ? (
-                            <div className="space-y-3">
-                              <span className="text-[11px] font-black uppercase tracking-widest text-[#047857] bg-emerald-100/70 border border-emerald-200 px-3 py-1 rounded-lg">
-                                Đáp án chính xác! 🎉
-                              </span>
-                              
-                              <div className="flex items-center justify-center gap-2 pt-1">
-                                <h3 className="text-3xl md:text-4xl font-extrabold text-slate-800 tracking-[0.12em]">
-                                  {quizSentence?.chinese}
-                                </h3>
-                                <button 
-                                  onClick={() => handleSpeak(quizSentence?.chinese || '')}
-                                  className="p-1.5 bg-emerald-100 text-emerald-600 rounded-full hover:bg-emerald-200 transition-colors cursor-pointer"
-                                >
-                                  <Volume2 size={20} />
-                                </button>
-                              </div>
-                              <p className="text-base text-slate-500 font-bold italic">
-                                {quizSentence?.pinyin}
+
+                        {/* Result and Canvas area */}
+                        <div className="w-full space-y-4 md:space-y-6">
+                          {/* Selected Area */}
+                          <div className="w-full min-h-[60px] md:min-h-[90px] border-2 border-dashed border-slate-200 rounded-2xl md:rounded-[2rem] p-2 md:p-4 flex flex-wrap items-center justify-center gap-1.5 md:gap-2 bg-slate-50/50">
+                            {selectedSegmentIndices.length === 0 ? (
+                              <p className="text-[10px] md:text-sm font-semibold text-slate-400 italic text-center">
+                                Bấm chọn các mảnh từ bên dưới theo thứ tự đúng...
                               </p>
+                            ) : (
+                              selectedSegmentIndices.map((shuffledIdx, displayIdx) => {
+                                if (shuffledIdx === null) {
+                                  const isFocused = focusedSlotIndex === displayIdx;
+                                  return (
+                                    <button
+                                      key={`empty-slot-${displayIdx}`}
+                                      type="button"
+                                      disabled={wordOrderResultState !== 'playing'}
+                                      onClick={() => setFocusedSlotIndex(displayIdx)}
+                                      className={`h-[34px] md:h-[42px] px-3 md:px-4 flex items-center justify-center rounded-lg md:rounded-xl border-2 border-dashed transition-all duration-150 cursor-pointer text-xs md:text-sm ${
+                                        isFocused
+                                          ? 'border-indigo-600 bg-indigo-50/70 text-indigo-750 shadow-md scale-105 animate-pulse font-bold'
+                                          : 'border-slate-300 bg-white hover:border-slate-400 hover:bg-slate-50 text-slate-400 font-semibold'
+                                      }`}
+                                    >
+                                      {isFocused ? `Ô ${displayIdx + 1} ✎` : `Ô ${displayIdx + 1}`}
+                                    </button>
+                                  );
+                                }
+
+                                const segment = shuffledSegments[shuffledIdx];
+                                const isCorrectPos = wordOrderSegments[displayIdx] && segment.text === wordOrderSegments[displayIdx];
+                                
+                                let buttonClass = '';
+                                if (wordOrderResultState === 'playing') {
+                                  buttonClass = isCorrectPos
+                                    ? 'bg-emerald-50 text-emerald-800 border-emerald-300 hover:bg-emerald-100/80 hover:border-emerald-400 cursor-pointer'
+                                    : 'bg-white hover:bg-slate-50 text-slate-800 border-slate-200 hover:border-indigo-400 cursor-pointer';
+                                } else if (wordOrderResultState === 'correct') {
+                                  buttonClass = 'bg-emerald-505 text-white bg-emerald-500 border-emerald-600 shadow-md shadow-emerald-100 cursor-default';
+                                } else { // incorrect
+                                  buttonClass = isCorrectPos
+                                    ? 'bg-emerald-50 text-emerald-800 border-emerald-300 opacity-95 cursor-default'
+                                    : 'animate-blink-red border-rose-300 cursor-default';
+                                }
+
+                                return (
+                                  <button
+                                    key={`selected-${displayIdx}`}
+                                    disabled={wordOrderResultState !== 'playing'}
+                                    onClick={() => {
+                                      // Clear this slot and make it focused!
+                                      setSelectedSegmentIndices(prev => {
+                                        const next = [...prev];
+                                        next[displayIdx] = null;
+                                        return next;
+                                      });
+                                      setFocusedSlotIndex(displayIdx);
+                                    }}
+                                    className={`px-3 py-1.5 md:px-4 md:py-2 font-extrabold text-xs md:text-lg lg:text-xl rounded-lg md:rounded-xl border shadow-sm transition-all animate-in zoom-in duration-100 ${buttonClass}`}
+                                  >
+                                    {segment.text}
+                                  </button>
+                                );
+                              })
+                            )}
+                          </div>
+
+                          {/* Choices Area */}
+                          {wordOrderResultState === 'playing' ? (
+                            <div className="w-full flex flex-wrap items-center justify-center gap-1.5 md:gap-2.5 pt-1 md:pt-2">
+                              {shuffledSegments.map((segment, idx) => {
+                                const isSelected = selectedSegmentIndices.includes(idx);
+                                return (
+                                  <button
+                                    key={`shuffled-${segment.id}`}
+                                    disabled={isSelected}
+                                    onClick={() => {
+                                      setSelectedSegmentIndices(prev => {
+                                        const next = [...prev];
+                                        // If there is a manually focused slot and it is empty, put it there!
+                                        if (focusedSlotIndex !== null && focusedSlotIndex < next.length && next[focusedSlotIndex] === null) {
+                                          next[focusedSlotIndex] = idx;
+                                          // Proactively focus the next empty slot
+                                          const nextNull = next.indexOf(null);
+                                          setFocusedSlotIndex(nextNull !== -1 ? nextNull : null);
+                                          return next;
+                                        }
+
+                                        // Otherwise, fill the first available null slot
+                                        const firstNull = next.indexOf(null);
+                                        if (firstNull !== -1) {
+                                          next[firstNull] = idx;
+                                          // Focus the next empty slot
+                                          const nextNull = next.indexOf(null);
+                                          setFocusedSlotIndex(nextNull !== -1 ? nextNull : null);
+                                        }
+                                        return next;
+                                      });
+                                    }}
+                                    className={`px-3 py-1.5 md:px-4.5 md:py-2.5 font-extrabold text-xs md:text-lg lg:text-xl rounded-lg md:rounded-xl border transition-all duration-150 cursor-pointer ${
+                                      isSelected
+                                        ? 'bg-slate-50 text-slate-300 border-slate-100 opacity-40 select-none cursor-default'
+                                        : 'bg-white text-slate-800 border-slate-200 shadow-sm hover:border-indigo-500 hover:shadow-md hover:scale-105 active:scale-95'
+                                    }`}
+                                  >
+                                    {segment.text}
+                                  </button>
+                                );
+                              })}
                             </div>
                           ) : (
-                            <div className="space-y-2">
-                              <span className="text-[11px] font-black uppercase tracking-widest text-rose-700 bg-rose-100/70 border border-rose-200 px-3 py-1 rounded-lg">
-                                Chưa chính xác rồi 😢
-                              </span>
-                              <p className="text-sm font-semibold text-rose-600/90 leading-relaxed pt-1">
-                                Hãy kiểm tra lại trật tự sắp xếp từ của bạn và thử lại nhé!
-                              </p>
-                            </div>
+                            /* Correct or Incorrect Visual Feedbacks */
+                            <motion.div 
+                              initial={{ opacity: 0, y: 10 }}
+                              animate={{ opacity: 1, y: 0 }}
+                              className={`p-4 md:p-6 rounded-xl md:rounded-[2rem] border-2 text-center space-y-2 md:space-y-3 ${
+                                wordOrderResultState === 'correct' 
+                                  ? 'bg-emerald-50 border-emerald-100 text-emerald-950' 
+                                  : 'bg-rose-50 border-rose-100 text-rose-950'
+                              }`}
+                            >
+                              {wordOrderResultState === 'correct' ? (
+                                <div className="space-y-2">
+                                  <span className="text-[10px] font-black uppercase tracking-widest text-[#047857] bg-emerald-100/70 border border-emerald-200 px-2.5 py-0.5 rounded-lg">
+                                    Đáp án chính xác! 🎉
+                                  </span>
+                                  
+                                  <div className="flex items-center justify-center gap-1.5 pt-1">
+                                    <h3 className="text-xl md:text-4xl font-extrabold text-slate-800 tracking-[0.05em] md:tracking-[0.12em]">
+                                      {quizSentence?.chinese}
+                                    </h3>
+                                    <div className="flex items-center gap-1">
+                                      <button 
+                                        onClick={() => handleSpeak(quizSentence?.chinese || '', false)}
+                                        title="Nghe thường (1.0x)"
+                                        className="p-1 bg-emerald-100 text-emerald-600 rounded-full hover:bg-emerald-200 transition-colors cursor-pointer flex items-center justify-center animate-in zoom-in"
+                                      >
+                                        <Volume2 size={16} />
+                                      </button>
+                                      <button 
+                                        onClick={() => handleSpeak(quizSentence?.chinese || '', true)}
+                                        title="Nghe chậm (0.5x)"
+                                        className="p-1 bg-amber-50 text-amber-600 rounded-full hover:bg-amber-100 transition-colors cursor-pointer text-xs flex items-center justify-center leading-none animate-in zoom-in"
+                                      >
+                                        🐢
+                                      </button>
+                                    </div>
+                                  </div>
+                                  <p className="text-xs md:text-base text-slate-500 font-bold italic">
+                                    {quizSentence?.pinyin}
+                                  </p>
+                                </div>
+                              ) : (
+                                <div className="space-y-1">
+                                  <span className="text-[10px] font-black uppercase tracking-widest text-rose-700 bg-rose-100/70 border border-rose-200 px-2.5 py-0.5 rounded-lg">
+                                    Chưa chính xác rồi 😢
+                                  </span>
+                                  <p className="text-xs font-semibold text-rose-600/90 leading-relaxed pt-1">
+                                    Hãy kiểm tra lại trật tự sắp xếp từ của bạn và thử lại nhé!
+                                  </p>
+                                </div>
+                              )}
+                            </motion.div>
                           )}
-                        </motion.div>
-                      )}
-                    </div>
+                        </div>
 
-                    {/* Bottom Action Area */}
-                    <div className="w-full flex gap-3 pt-6 border-t border-slate-50 mt-4">
-                      {wordOrderResultState === 'playing' ? (
-                        <>
-                          <button
-                            type="button"
-                            disabled={!selectedSegmentIndices.some(idx => idx !== null)}
-                            onClick={() => {
-                              setSelectedSegmentIndices(Array(wordOrderSegments.length).fill(null));
-                              setFocusedSlotIndex(null);
-                            }}
-                            className="flex-1 py-3.5 bg-slate-100 hover:bg-slate-200 text-slate-600 font-extrabold rounded-xl transition-all text-sm uppercase tracking-wide cursor-pointer disabled:opacity-50"
-                          >
-                            Xóa hết
-                          </button>
-                          
-                          <button
-                            type="button"
-                            disabled={!selectedSegmentIndices.some(idx => idx !== null)}
-                            onClick={checkWordOrderAnswer}
-                            className="flex-1 py-3.5 bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold rounded-xl transition-all text-sm uppercase tracking-wide shadow-md shadow-indigo-100 cursor-pointer disabled:opacity-50"
-                          >
-                            Kiểm tra
-                          </button>
-                        </>
-                      ) : (
-                        <>
-                          {wordOrderResultState === 'incorrect' && (
+                        {/* Bottom Action Area */}
+                        <div className="w-full flex gap-2 md:gap-3 pt-4 border-t border-slate-50 mt-3 md:mt-4">
+                          {wordOrderResultState === 'playing' ? (
                             <>
                               <button
                                 type="button"
+                                disabled={!selectedSegmentIndices.some(idx => idx !== null)}
                                 onClick={() => {
-                                  setWordOrderResultState('playing');
+                                  setSelectedSegmentIndices(Array(wordOrderSegments.length).fill(null));
+                                  setFocusedSlotIndex(null);
                                 }}
-                                className="flex-1 py-3.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-100 font-extrabold rounded-xl transition-all text-xs md:text-sm uppercase tracking-wide cursor-pointer animate-in fade-in"
+                                className="flex-1 py-2.5 md:py-3.5 bg-slate-100 hover:bg-slate-200 text-slate-600 font-extrabold rounded-xl transition-all text-xs md:text-sm uppercase tracking-wide cursor-pointer disabled:opacity-50"
                               >
-                                Sửa câu hiện tại
+                                Xóa hết
                               </button>
                               
                               <button
                                 type="button"
-                                onClick={() => {
-                                  setSelectedSegmentIndices(Array(wordOrderSegments.length).fill(null));
-                                  setFocusedSlotIndex(null);
-                                  setWordOrderResultState('playing');
-                                }}
-                                className="flex-1 py-3.5 bg-slate-100 hover:bg-slate-200 text-slate-600 font-extrabold rounded-xl transition-all text-xs md:text-sm uppercase tracking-wide cursor-pointer animate-in fade-in"
+                                disabled={!selectedSegmentIndices.some(idx => idx !== null)}
+                                onClick={checkWordOrderAnswer}
+                                className="flex-1 py-2.5 md:py-3.5 bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold rounded-xl transition-all text-xs md:text-sm uppercase tracking-wide shadow-md shadow-indigo-100 cursor-pointer disabled:opacity-50"
                               >
-                                Thử lại từ đầu
+                                Kiểm tra
+                              </button>
+                            </>
+                          ) : (
+                            <>
+                              {wordOrderResultState === 'incorrect' && (
+                                <>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setWordOrderResultState('playing');
+                                    }}
+                                    className="flex-1 py-2.5 md:py-3.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-100 font-extrabold rounded-xl transition-all text-[11px] md:text-sm uppercase tracking-wide cursor-pointer animate-in fade-in"
+                                  >
+                                    Sửa câu
+                                  </button>
+                                  
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setSelectedSegmentIndices(Array(wordOrderSegments.length).fill(null));
+                                      setFocusedSlotIndex(null);
+                                      setWordOrderResultState('playing');
+                                    }}
+                                    className="flex-1 py-2.5 md:py-3.5 bg-slate-100 hover:bg-slate-200 text-slate-600 font-extrabold rounded-xl transition-all text-[11px] md:text-sm uppercase tracking-wide cursor-pointer animate-in fade-in"
+                                  >
+                                    Thử lại
+                                  </button>
+                                </>
+                              )}
+                              
+                              <button
+                                type="button"
+                                onClick={() => startWordOrderQuiz()}
+                                className="flex-1 py-2.5 md:py-3.5 bg-primary text-white font-extrabold rounded-xl transition-all text-xs md:text-sm uppercase tracking-wide shadow-lg shadow-emerald-100 hover:bg-primary-dark cursor-pointer animate-in fade-in"
+                              >
+                                Tiếp tục
                               </button>
                             </>
                           )}
-                          
-                          <button
-                            type="button"
-                            onClick={() => startWordOrderQuiz()}
-                            className="flex-1 py-3.5 bg-primary text-white font-extrabold rounded-xl transition-all text-sm uppercase tracking-wide shadow-lg shadow-emerald-100 hover:bg-primary-dark cursor-pointer animate-in fade-in"
-                          >
-                            Câu tiếp theo
-                          </button>
-                        </>
-                      )}
+                        </div>
+                      </div>
                     </div>
-                  </div>
-                </div>
-              </motion.div>
-            )}
+                  </motion.div>
+                )}
               </AnimatePresence>
             </div>
           )}
@@ -2239,6 +3557,98 @@ export default function App() {
                   className="flex-1 px-4 py-3 bg-rose-500 text-white font-bold rounded-xl hover:bg-rose-600 transition-colors shadow-lg shadow-rose-200 flex items-center justify-center gap-2"
                 >
                   {confirmModal.isLoading ? <Loader2 size={18} className="animate-spin" /> : "Xác nhận xóa"}
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Save Word/Grammar Notification Modal */}
+      <AnimatePresence>
+        {saveNotification && saveNotification.show && (
+          <motion.div 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[120] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm"
+            onClick={() => setSaveNotification(null)}
+          >
+            <motion.div 
+              initial={{ scale: 0.9, opacity: 0, y: 20 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              exit={{ scale: 0.9, opacity: 0, y: 20 }}
+              className="bg-white rounded-3xl p-6 md:p-8 max-w-sm w-full shadow-2xl relative overflow-hidden"
+              onClick={(e) => e.stopPropagation()}
+            >
+              {/* Top colored accent line */}
+              <div className={`absolute top-0 left-0 right-0 h-2 ${
+                saveNotification.isDuplicate 
+                  ? 'bg-amber-500' 
+                  : saveNotification.type === 'grammar' 
+                    ? 'bg-indigo-600' 
+                    : 'bg-emerald-500'
+              }`} />
+
+              <div className="flex flex-col items-center text-center mt-2">
+                {/* Visual Icon */}
+                <div className={`w-14 h-14 rounded-2xl flex items-center justify-center mb-4 ${
+                  saveNotification.isDuplicate 
+                    ? 'bg-amber-50 text-amber-500' 
+                    : saveNotification.type === 'grammar' 
+                      ? 'bg-indigo-50 text-indigo-600' 
+                      : 'bg-emerald-50 text-emerald-600'
+                }`}>
+                  {saveNotification.isDuplicate ? (
+                    <BookOpen size={28} />
+                  ) : saveNotification.type === 'grammar' ? (
+                    <Zap size={28} className="fill-indigo-100" />
+                  ) : (
+                    <Check size={28} className="text-emerald-500" />
+                  )}
+                </div>
+
+                <h3 className="text-lg md:text-xl font-bold text-slate-800 mb-1">
+                  {saveNotification.isDuplicate ? 'Đã tồn tại' : 'Đã lưu thành công'}
+                </h3>
+                
+                <p className="text-slate-500 text-xs font-semibold uppercase tracking-wider mb-3">
+                  {saveNotification.type === 'grammar' ? 'Cấu trúc Ngữ pháp' : 'Từ vựng Tiếng Trung'}
+                </p>
+
+                {/* The saved content display */}
+                <div className={`w-full p-4 rounded-2xl border-2 mb-6 ${
+                  saveNotification.isDuplicate 
+                    ? 'bg-amber-50/40 border-amber-100' 
+                    : saveNotification.type === 'grammar' 
+                      ? 'bg-indigo-50/40 border-indigo-100' 
+                      : 'bg-emerald-50/40 border-emerald-100'
+                }`}>
+                  <p className={`text-3xl font-black mb-1 tracking-wide ${
+                    saveNotification.isDuplicate 
+                      ? 'text-amber-800' 
+                      : saveNotification.type === 'grammar' 
+                        ? 'text-indigo-800' 
+                        : 'text-emerald-800'
+                  }`}>
+                    {saveNotification.text}
+                  </p>
+                  <p className="text-[11px] text-slate-500 font-semibold tracking-wider uppercase">
+                    {saveNotification.isDuplicate ? 'Đã có trong sổ tay' : 'Đã được lưu vào sổ tay'}
+                  </p>
+                </div>
+
+                <button 
+                  onClick={() => setSaveNotification(null)}
+                  className={`w-full py-3 text-white font-extrabold rounded-xl transition duration-150 shadow-md ${
+                    saveNotification.isDuplicate 
+                      ? 'bg-amber-500 hover:bg-amber-600 shadow-amber-100' 
+                      : saveNotification.type === 'grammar' 
+                        ? 'bg-indigo-600 hover:bg-indigo-700 shadow-indigo-100' 
+                        : 'bg-emerald-600 hover:bg-emerald-700 shadow-emerald-100'
+                  }`}
+                >
+                  Tuyệt vời!
                 </button>
               </div>
             </motion.div>
