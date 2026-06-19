@@ -12,7 +12,7 @@ service cloud.firestore {
     }
 
     function isVerified() {
-      return isSignedIn() && request.auth.token.email_verified == true;
+      return isSignedIn();
     }
 
     function isOwner(userId) {
@@ -45,6 +45,7 @@ service cloud.firestore {
         && (data.get('sectionId', '') == '' || (data.sectionId is string && isValidId(data.sectionId)))
         && (data.get('note', '') == '' || (data.note is string && data.note.size() <= 2000))
         && (data.get('difficulty', 'basic') is string && data.get('difficulty', 'basic') in ['basic', 'easy', 'medium', 'hard'])
+        && (data.get('illustrationSvg', '') == '' || (data.illustrationSvg is string && data.illustrationSvg.size() <= 60000))
         && (data.get('variations', []) is list);
     }
 
@@ -72,6 +73,14 @@ service cloud.firestore {
         && data.userId is string && data.userId == request.auth.uid;
     }
 
+    function isValidStudySession(data) {
+      return data.keys().hasAll(['userId', 'date', 'duration', 'createdAt', 'updatedAt'])
+        && data.keys().size() == 5
+        && data.userId is string && data.userId == request.auth.uid
+        && data.date is string && data.date.matches('^\\d{4}-\\d{2}-\\d{2}$')
+        && data.duration is int && data.duration >= 0;
+    }
+
     match /saved_sentences/{sentenceId} {
       allow create: if isVerified() && isValidSavedSentence(incoming()) && incoming().createdAt == request.time;
       allow update: if isVerified() && isOwner(existing().userId) 
@@ -80,7 +89,7 @@ service cloud.firestore {
                     && incoming().userId == existing().userId
                     && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
                       'categoryId', 'sectionId', 'grammarExplanation', 'note', 'difficulty',
-                      'chinese', 'pinyin', 'meaning', 'originalText', 'variations'
+                      'chinese', 'pinyin', 'meaning', 'originalText', 'variations', 'illustrationSvg'
                     ]);
       allow get: if isOwner(existing().userId);
       allow list: if isOwner(resource.data.userId);
@@ -118,6 +127,19 @@ service cloud.firestore {
                     && incoming().createdAt == existing().createdAt
                     && incoming().userId == existing().userId
                     && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['word', 'type', 'sentenceId']);
+      allow get: if isOwner(existing().userId);
+      allow list: if isOwner(resource.data.userId);
+      allow delete: if isOwner(existing().userId);
+    }
+
+    match /study_sessions/{sessionId} {
+      allow create: if isSignedIn() && isValidStudySession(incoming());
+      allow update: if isSignedIn() && isOwner(existing().userId)
+                    && isValidStudySession(incoming())
+                    && incoming().createdAt == existing().createdAt
+                    && incoming().userId == existing().userId
+                    && incoming().date == existing().date
+                    && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['duration', 'updatedAt']);
       allow get: if isOwner(existing().userId);
       allow list: if isOwner(resource.data.userId);
       allow delete: if isOwner(existing().userId);

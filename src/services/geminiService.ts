@@ -27,6 +27,7 @@ export interface TranslationResult {
   pinyin: string;
   meaning: string;
   grammarExplanation: string;
+  illustrationSvg?: string;
   variations?: Variation[];
 }
 
@@ -38,7 +39,7 @@ export const translateAndExplain = async (text: string): Promise<TranslationResu
   const response = await ai.models.generateContent({
     model: "gemini-3-flash-preview",
     contents: `Translate the following Vietnamese sentence into Chinese (Simplified). 
-    Provide the Chinese characters, Pinyin, and a detailed explanation in Vietnamese.
+    Provide the Chinese characters, Pinyin, a detailed explanation in Vietnamese, and a beautiful vector inline SVG illustration of the sentence.
     
     Additionally, provide 3 variations of the same sentence (e.g., negative, question, or adding emphasis) with their pinyin and meaning.
     
@@ -59,6 +60,10 @@ export const translateAndExplain = async (text: string): Promise<TranslationResu
           pinyin: { type: Type.STRING, description: "The Pinyin pronunciation" },
           meaning: { type: Type.STRING, description: "The meaning in Vietnamese" },
           grammarExplanation: { type: Type.STRING, description: "A detailed grammar and vocabulary breakdown in Vietnamese (Markdown format, one point per line)" },
+          illustrationSvg: { 
+            type: Type.STRING, 
+            description: "A beautiful, self-contained responsive raw SVG illustration representing the sentence. It must start with <svg> and end with </svg>, viewBox '0 0 200 200', use flat minimalist 2D shapes with modern elegant pastel colors. No markdown wrapper like ```xml." 
+          },
           variations: {
             type: Type.ARRAY,
             items: {
@@ -73,7 +78,7 @@ export const translateAndExplain = async (text: string): Promise<TranslationResu
             description: "3 variations of the original sentence",
           },
         },
-        required: ["chinese", "pinyin", "meaning", "grammarExplanation", "variations"],
+        required: ["chinese", "pinyin", "meaning", "grammarExplanation", "illustrationSvg", "variations"],
       },
     },
   });
@@ -81,5 +86,49 @@ export const translateAndExplain = async (text: string): Promise<TranslationResu
   const content = response.text;
   if (!content) throw new Error("No response from AI");
   
-  return JSON.parse(content) as TranslationResult;
+  const parsed = JSON.parse(content) as TranslationResult;
+  // Clean markdown wrappers if any leaked in
+  if (parsed.illustrationSvg) {
+    let svg = parsed.illustrationSvg.trim();
+    if (svg.startsWith("```xml")) {
+      svg = svg.replace(/^```xml/, "").replace(/```$/, "");
+    } else if (svg.startsWith("```svg")) {
+      svg = svg.replace(/^```svg/, "").replace(/```$/, "");
+    } else if (svg.startsWith("```")) {
+      svg = svg.replace(/^```/, "").replace(/```$/, "");
+    }
+    parsed.illustrationSvg = svg.trim();
+  }
+  return parsed;
+};
+
+export const generateIllustrationSvg = async (chinese: string, meaning: string): Promise<string> => {
+  const ai = getGenAI();
+  if (!ai) {
+    throw new Error("Chưa cấu hình API Key cho AI.");
+  }
+  const response = await ai.models.generateContent({
+    model: "gemini-3-flash-preview",
+    contents: `Write an inline SVG illustration for the Chinese sentence: "${chinese}" (Meaning: "${meaning}").
+    
+    GUIDELINES:
+    - Draw a complete, beautiful self-contained SVG illustration representing the main literal or symbolic subject of the sentence (e.g. coffee cup for tea/coffee, sun/umbrella for weather, cute minimalist cartoon scenes, travel icons, books, etc.).
+    - Keep it modern, clean, flat minimalist flat 2D style. Use soft pastel colors with gorgeous curves and nice shadows or gradient fills.
+    - The SVG MUST have dimensions of a square viewBox (viewBox="0 0 200 200").
+    - The SVG MUST be responsive (width="100%" height="100%").
+    - Do NOT include any markdown code blocks, XML declarations, or html comments.
+    - Start immediately with "<svg" and end with "</svg>".
+    - Avoid complex shapes to keep the token size reasonable. Max size around 2000-3000 characters.`,
+  });
+
+  let svg = response.text || "";
+  svg = svg.trim();
+  if (svg.startsWith("```xml")) {
+    svg = svg.replace(/^```xml/, "").replace(/```$/, "");
+  } else if (svg.startsWith("```svg")) {
+    svg = svg.replace(/^```svg/, "").replace(/```$/, "");
+  } else if (svg.startsWith("```")) {
+    svg = svg.replace(/^```/, "").replace(/```$/, "");
+  }
+  return svg.trim();
 };

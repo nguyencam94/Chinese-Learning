@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   Loader2,
@@ -22,10 +22,13 @@ import {
   Settings,
   BookOpen,
   Check,
-  List
+  List,
+  Lock,
+  X,
+  SlidersHorizontal
 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
-import { translateAndExplain, TranslationResult } from './services/geminiService';
+import { translateAndExplain, TranslationResult, generateIllustrationSvg } from './services/geminiService';
 import { 
   auth, 
   db, 
@@ -39,6 +42,8 @@ import {
   doc,
   updateDoc,
   deleteDoc,
+  setDoc,
+  getDoc,
   serverTimestamp,
   query,
   where,
@@ -80,6 +85,15 @@ interface SavedSentence extends TranslationResult {
   createdAt: any;
   note?: string;
   difficulty?: 'basic' | 'easy' | 'medium' | 'hard';
+}
+
+interface StudySession {
+  id: string;
+  userId: string;
+  date: string; // YYYY-MM-DD
+  duration: number; // in seconds
+  createdAt: any;
+  updatedAt: any;
 }
 
 const getCategoryTheme = (categoryId?: string, categoriesList: Category[] = []) => {
@@ -168,7 +182,7 @@ export default function App() {
   const [sections, setSections] = useState<Section[]>([]);
   const [vocabulary, setVocabulary] = useState<Vocabulary[]>([]);
   const [showHistory, setShowHistory] = useState(false);
-  const [activeView, setActiveView] = useState<'home' | 'admin' | 'tests' | 'learn'>('home');
+  const [activeView, setActiveView] = useState<'home' | 'admin' | 'tests' | 'learn' | 'progress'>('home');
   const [testType, setTestType] = useState<'vocabulary' | 'grammar' | 'word-order' | null>(null);
   const [quizWord, setQuizWord] = useState<Vocabulary | null>(null);
   const [quizSentence, setQuizSentence] = useState<SavedSentence | null>(null);
@@ -195,6 +209,122 @@ export default function App() {
   const [editableExplanation, setEditableExplanation] = useState('');
   const [noteText, setNoteText] = useState('');
   const [isEditingNote, setIsEditingNote] = useState(false);
+  const [isLearnSettingsOpen, setIsLearnSettingsOpen] = useState(false);
+  const [isGeneratingIllustration, setIsGeneratingIllustration] = useState(false);
+  
+  // Study tracking state
+  const [studySessions, setStudySessions] = useState<StudySession[]>([]);
+  const [activeSecondsToday, setActiveSecondsToday] = useState(0);
+  const lastSavedDurationRef = useRef(0);
+  const todaySessionExistsRef = useRef(false);
+
+  useEffect(() => {
+    todaySessionExistsRef.current = studySessions.some(s => s.date === getLocalDateString());
+  }, [studySessions]);
+
+  const getLocalDateString = () => {
+    const d = new Date();
+    const year = d.getFullYear();
+    const month = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  };
+
+  const calculateStudyStreak = (sessions: StudySession[], activeSecsToday: number) => {
+    const todayStr = getLocalDateString();
+    const qualifiedDatesSet = new Set<string>();
+    
+    sessions.forEach(s => {
+      if (s.date === todayStr) {
+        if (Math.max(s.duration, activeSecsToday) >= 1800) {
+          qualifiedDatesSet.add(todayStr);
+        }
+      } else if (s.duration >= 1800) {
+        qualifiedDatesSet.add(s.date);
+      }
+    });
+    
+    if (activeSecsToday >= 1800) {
+      qualifiedDatesSet.add(todayStr);
+    }
+    
+    const qualifiedDates = Array.from(qualifiedDatesSet).sort((a, b) => b.localeCompare(a));
+    
+    if (qualifiedDates.length === 0) return 0;
+    
+    const yesterdayStr = (() => {
+      const d = new Date();
+      d.setDate(d.getDate() - 1);
+      const yr = d.getFullYear();
+      const mo = String(d.getMonth() + 1).padStart(2, '0');
+      const dy = String(d.getDate()).padStart(2, '0');
+      return `${yr}-${mo}-${dy}`;
+    })();
+    
+    let startIdx = 0;
+    if (qualifiedDates[0] === todayStr) {
+      startIdx = 0;
+    } else if (qualifiedDates[0] === yesterdayStr) {
+      startIdx = 0;
+    } else {
+      return 0; // Streak is broken
+    }
+    
+    let streak = 0;
+    const cursorDate = new Date(qualifiedDates[startIdx]);
+    
+    while (true) {
+      const cursorStr = `${cursorDate.getFullYear()}-${String(cursorDate.getMonth() + 1).padStart(2, '0')}-${String(cursorDate.getDate()).padStart(2, '0')}`;
+      if (qualifiedDatesSet.has(cursorStr)) {
+        streak++;
+        cursorDate.setDate(cursorDate.getDate() - 1);
+      } else {
+        break;
+      }
+    }
+    
+    return streak;
+  };
+
+  const getDailyHistoryData = () => {
+    const resultList = [];
+    const today = new Date();
+    
+    for (let i = 6; i >= 0; i--) {
+      const d = new Date();
+      d.setDate(today.getDate() - i);
+      const yr = d.getFullYear();
+      const mo = String(d.getMonth() + 1).padStart(2, '0');
+      const dy = String(d.getDate()).padStart(2, '0');
+      const dateStr = `${yr}-${mo}-${dy}`;
+      
+      let duration = 0;
+      if (dateStr === getLocalDateString()) {
+        duration = activeSecondsToday;
+      } else {
+        const match = studySessions.find(s => s.date === dateStr);
+        if (match) {
+          duration = match.duration;
+        }
+      }
+      
+      let label = `${dy}/${mo}`;
+      if (i === 0) label = "Hôm nay";
+      else if (i === 1) label = "Hôm qua";
+      
+      const dayNames = ["CN", "T2", "T3", "T4", "T5", "T6", "T7"];
+      const dayOfWeek = dayNames[d.getDay()];
+
+      resultList.push({
+        date: dateStr,
+        duration,
+        label,
+        dayOfWeek,
+        isGoalMet: duration >= 1800
+      });
+    }
+    return resultList;
+  };
   
   // Main sentence editing states
   const [isEditingMainSentence, setIsEditingMainSentence] = useState(false);
@@ -707,6 +837,139 @@ export default function App() {
     return () => unsubscribe();
   }, [user]);
 
+  // Firestore Listener for Study Sessions
+  useEffect(() => {
+    if (!user) {
+      setStudySessions([]);
+      setActiveSecondsToday(0);
+      lastSavedDurationRef.current = 0;
+      return;
+    }
+
+    const q = query(
+      collection(db, 'study_sessions'),
+      where('userId', '==', user.uid)
+    );
+
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const docs = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      })) as StudySession[];
+      
+      // Sort client-side by date descending to prevent index issues
+      docs.sort((a, b) => b.date.localeCompare(a.date));
+      setStudySessions(docs);
+      
+      const todayStr = getLocalDateString();
+      const todaySession = docs.find(s => s.date === todayStr);
+      if (todaySession) {
+        setActiveSecondsToday(prev => {
+          if (todaySession.duration > prev) {
+            lastSavedDurationRef.current = todaySession.duration;
+            return todaySession.duration;
+          }
+          return prev;
+        });
+      }
+    }, (err) => {
+      console.error("Study Sessions Listener Error:", err);
+    });
+
+    return () => unsubscribe();
+  }, [user]);
+
+  // Timer: increment study seconds locally every second
+  useEffect(() => {
+    if (!user) return;
+
+    const interval = setInterval(() => {
+      setActiveSecondsToday(prev => prev + 1);
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, [user]);
+
+  // Sync study duration to Firestore (throttled every 15 seconds)
+  useEffect(() => {
+    if (!user || activeSecondsToday === 0) return;
+
+    if (activeSecondsToday - lastSavedDurationRef.current >= 15) {
+      const todayStr = getLocalDateString();
+      const docId = `${user.uid}_${todayStr}`;
+      
+      const saveDuration = async () => {
+        try {
+          if (!auth.currentUser) return;
+          const docRef = doc(db, 'study_sessions', docId);
+          const exists = todaySessionExistsRef.current;
+          
+          if (exists) {
+            await updateDoc(docRef, {
+              duration: activeSecondsToday,
+              updatedAt: serverTimestamp()
+            });
+          } else {
+            await setDoc(docRef, {
+              userId: user.uid,
+              date: todayStr,
+              duration: activeSecondsToday,
+              createdAt: serverTimestamp(),
+              updatedAt: serverTimestamp()
+            });
+          }
+          lastSavedDurationRef.current = activeSecondsToday;
+        } catch (err) {
+          console.error("Error saving daily study activity:", err);
+        }
+      };
+
+      saveDuration();
+    }
+  }, [user, activeSecondsToday]);
+
+  // Save on component unmount or tab closing
+  useEffect(() => {
+    if (!user) return;
+
+    return () => {
+      // If user has signed out in the meantime, avoid writing to Firestore (which would fail due to lacking auth credentials)
+      if (!auth.currentUser) return;
+
+      const currentSeconds = activeSecondsToday;
+      const lastSaved = lastSavedDurationRef.current;
+      if (currentSeconds > lastSaved) {
+        const todayStr = getLocalDateString();
+        const docId = `${user.uid}_${todayStr}`;
+        const docRef = doc(db, 'study_sessions', docId);
+        
+        const exists = todaySessionExistsRef.current;
+        if (exists) {
+          updateDoc(docRef, {
+            duration: currentSeconds,
+            updatedAt: serverTimestamp()
+          }).catch(e => {
+            if (e.code !== 'permission-denied') {
+              console.error("Unmount update failed:", e);
+            }
+          });
+        } else {
+          setDoc(docRef, {
+            userId: user.uid,
+            date: todayStr,
+            duration: currentSeconds,
+            createdAt: serverTimestamp(),
+            updatedAt: serverTimestamp()
+          }).catch(e => {
+            if (e.code !== 'permission-denied') {
+              console.error("Unmount save failed:", e);
+            }
+          });
+        }
+      }
+    };
+  }, [user, activeSecondsToday]);
+
   const handleLogin = async () => {
     try {
       await signInWithPopup(auth, googleProvider);
@@ -758,6 +1021,7 @@ export default function App() {
         pinyin: result.pinyin,
         meaning: result.meaning,
         grammarExplanation: result.grammarExplanation,
+        illustrationSvg: result.illustrationSvg || '',
         variations: result.variations || [],
         createdAt: serverTimestamp(),
         difficulty: inputDifficulty
@@ -771,7 +1035,7 @@ export default function App() {
       }
 
       const docRef = await addDoc(collection(db, 'saved_sentences'), data);
-      setResult({ ...result, id: docRef.id, originalText: inputText, difficulty: inputDifficulty } as SavedSentence);
+      setResult({ ...result, id: docRef.id, originalText: inputText, difficulty: inputDifficulty, illustrationSvg: result.illustrationSvg || '' } as SavedSentence);
       setError(null);
     } catch (err) {
       handleFirestoreError(err, OperationType.CREATE, 'saved_sentences');
@@ -1132,14 +1396,14 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-screen bg-sleek-bg text-sleek-text flex flex-col font-sans mb-20 lg:mb-0">
+    <div className="min-h-screen bg-sleek-bg text-sleek-text flex flex-col font-sans mb-20 lg:mb-0 overflow-x-hidden">
       {/* Top Navigation Bar */}
-      <nav className="h-16 bg-white border-b border-sleek-border px-4 md:px-8 flex items-center justify-between shrink-0 sticky top-0 z-50">
-        <div className="flex items-center gap-3">
-          <div className="w-8 h-8 bg-primary rounded-lg flex items-center justify-center">
-            <span className="text-white font-bold text-xl leading-none">Z</span>
+      <nav className="h-16 bg-white border-b border-sleek-border px-2 sm:px-4 md:px-8 flex items-center justify-between shrink-0 sticky top-0 z-50">
+        <div className="flex items-center gap-1.5 sm:gap-3">
+          <div className="w-6 h-6 sm:w-8 sm:h-8 bg-primary rounded-lg flex items-center justify-center shrink-0">
+            <span className="text-white font-bold text-sm sm:text-xl leading-none">Z</span>
           </div>
-          <span className="font-bold text-xl tracking-tight">Zhongwen AI</span>
+          <span className="font-bold text-xs sm:text-base md:text-xl tracking-tight truncate max-w-[85px] xs:max-w-[120px] sm:max-w-none">Zhongwen AI</span>
         </div>
         
         {/* Desktop Navigation */}
@@ -1158,6 +1422,12 @@ export default function App() {
                 <BookOpen size={16} /> Học tập
               </button>
               <button 
+                onClick={() => { setActiveView('progress'); setTestType(null); }}
+                className={`px-6 py-2 rounded-lg text-sm font-bold transition-all flex items-center gap-2 ${activeView === 'progress' ? 'bg-white text-orange-500 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+              >
+                <Flame size={16} className={activeView === 'progress' ? 'fill-orange-500/10' : ''} /> Chuyên cần
+              </button>
+              <button 
                 onClick={() => { setActiveView('admin'); setTestType(null); }}
                 className={`px-6 py-2 rounded-lg text-sm font-bold transition-all flex items-center gap-2 ${activeView === 'admin' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
               >
@@ -1172,12 +1442,12 @@ export default function App() {
             </div>
         </div>
 
-        <div className="flex items-center gap-2 md:gap-8">
+        <div className="flex items-center gap-1 sm:gap-2 md:gap-8">
           {/* Audio Speed Control Toggle */}
-          <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-xl border border-slate-200/40">
+          <div className="flex items-center gap-0.5 sm:gap-1 bg-slate-100 p-0.5 sm:p-1 rounded-xl border border-slate-200/40 shrink-0">
             <button
               onClick={() => setSpeakSlowGlobal(false)}
-              className={`px-2.5 py-1 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all cursor-pointer ${
+              className={`px-1.5 py-1 sm:px-2.5 sm:py-1 rounded-lg text-[9px] sm:text-[10px] font-black uppercase tracking-wider transition-all cursor-pointer ${
                 !speakSlowGlobal ? 'bg-white text-primary shadow-sm' : 'text-slate-500 hover:text-slate-700'
               }`}
               title="Tốc độ mặc định (1.0x)"
@@ -1186,7 +1456,7 @@ export default function App() {
             </button>
             <button
               onClick={() => setSpeakSlowGlobal(true)}
-              className={`px-2.5 py-1 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all flex items-center gap-1 cursor-pointer ${
+              className={`px-1.5 py-1 sm:px-2.5 sm:py-1 rounded-lg text-[9px] sm:text-[10px] font-black uppercase tracking-wider transition-all flex items-center gap-0.5 sm:gap-1 cursor-pointer ${
                 speakSlowGlobal ? 'bg-amber-100 text-amber-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'
               }`}
               title="Tốc độ đọc chậm (0.5x)"
@@ -1205,13 +1475,13 @@ export default function App() {
             <span className="text-[10px] font-black text-sleek-muted uppercase tracking-tighter">{user ? 'Lv. 12' : 'Guest'}</span>
           </div>
           
-          <div className="flex items-center gap-2 md:gap-4">
+          <div className="flex items-center gap-1 sm:gap-2 md:gap-4 shrink-0">
             {user ? (
               <>
-                <div className="flex items-center gap-1 font-bold text-orange-500 text-sm md:text-base">
-                  <Flame size={16} className="md:w-5 md:h-5" fill="currentColor" /> 124
+                <div className="flex items-center gap-0.5 sm:gap-1 font-bold text-orange-500 text-xs sm:text-base">
+                  <Flame size={14} className="sm:w-5 sm:h-5 shrink-0" fill="currentColor" /> <span className="text-xs sm:text-sm">124</span>
                 </div>
-                <div className="w-8 h-8 md:w-10 md:h-10 rounded-full bg-slate-200 border-2 border-white shadow-sm overflow-hidden flex items-center justify-center cursor-pointer group relative">
+                <div className="w-7 h-7 sm:w-10 sm:h-10 rounded-full bg-slate-200 border-2 border-white shadow-sm overflow-hidden flex items-center justify-center cursor-pointer group relative">
                   <img src={user.photoURL || `https://api.dicebear.com/7.x/avataaars/svg?seed=${user.uid}`} alt="Avatar" className="w-full h-full object-cover" />
                   <div className="absolute top-full right-0 mt-2 hidden group-hover:block bg-white border border-sleek-border rounded-xl p-2 shadow-2xl min-w-[140px] z-50">
                     <div className="px-3 py-2 border-b border-slate-50 mb-1">
@@ -1229,9 +1499,9 @@ export default function App() {
             ) : (
               <button 
                 onClick={handleLogin}
-                className="flex items-center gap-2 px-3 py-1.5 md:px-4 md:py-2 bg-primary text-white font-bold rounded-xl hover:bg-primary-dark transition-colors text-xs md:text-sm"
+                className="flex items-center gap-1 px-2.5 py-1.5 sm:px-4 sm:py-2 bg-primary text-white font-bold rounded-xl hover:bg-primary-dark transition-colors text-xs sm:text-sm shrink-0"
               >
-                <LogIn size={16} /> <span className="hidden xs:inline">Đăng nhập</span>
+                <LogIn size={13} /> <span className="font-bold">Đăng nhập</span>
               </button>
             )}
           </div>
@@ -1239,34 +1509,41 @@ export default function App() {
       </nav>
 
       {/* Bottom Navigation for Mobile */}
-      <div className="lg:hidden fixed bottom-0 left-0 right-0 h-16 bg-white border-t border-sleek-border flex items-center justify-around px-2 z-50 pb-safe">
+      <div className="lg:hidden fixed bottom-0 left-0 right-0 h-16 bg-white border-t border-sleek-border flex items-center justify-around px-1 z-50 pb-safe">
         <button 
           onClick={() => { setActiveView('home'); setTestType(null); }}
-          className={`flex flex-col items-center gap-1 px-4 py-1 rounded-xl transition-all ${activeView === 'home' ? 'text-primary' : 'text-slate-400'}`}
+          className={`flex flex-col items-center gap-1 px-2.5 py-1 rounded-xl transition-all ${activeView === 'home' ? 'text-primary' : 'text-slate-400'}`}
         >
-          <Library size={20} className={activeView === 'home' ? 'fill-primary/10' : ''} />
-          <span className="text-[10px] font-bold">Thư viện</span>
+          <Library size={18} className={activeView === 'home' ? 'fill-primary/10' : ''} />
+          <span className="text-[9px] font-bold">Thư viện</span>
         </button>
         <button 
           onClick={() => { setActiveView('learn'); setTestType(null); }}
-          className={`flex flex-col items-center gap-1 px-4 py-1 rounded-xl transition-all ${activeView === 'learn' ? 'text-emerald-600' : 'text-slate-400'}`}
+          className={`flex flex-col items-center gap-1 px-2.5 py-1 rounded-xl transition-all ${activeView === 'learn' ? 'text-emerald-600' : 'text-slate-400'}`}
         >
-          <BookOpen size={20} className={activeView === 'learn' ? 'fill-emerald-50' : ''} />
-          <span className="text-[10px] font-bold">Học tập</span>
+          <BookOpen size={18} className={activeView === 'learn' ? 'fill-emerald-50' : ''} />
+          <span className="text-[9px] font-bold">Học tập</span>
+        </button>
+        <button 
+          onClick={() => { setActiveView('progress'); setTestType(null); }}
+          className={`flex flex-col items-center gap-1 px-2.5 py-1 rounded-xl transition-all ${activeView === 'progress' ? 'text-orange-500' : 'text-slate-400'}`}
+        >
+          <Flame size={18} className={activeView === 'progress' ? 'fill-orange-50' : ''} />
+          <span className="text-[9px] font-bold">Chuyên cần</span>
         </button>
         <button 
           onClick={() => { setActiveView('admin'); setTestType(null); }}
-          className={`flex flex-col items-center gap-1 px-4 py-1 rounded-xl transition-all ${activeView === 'admin' ? 'text-indigo-600' : 'text-slate-400'}`}
+          className={`flex flex-col items-center gap-1 px-2.5 py-1 rounded-xl transition-all ${activeView === 'admin' ? 'text-indigo-600' : 'text-slate-400'}`}
         >
-          <Plus size={20} className={activeView === 'admin' ? 'fill-indigo-50/50' : ''} />
-          <span className="text-[10px] font-bold">Thêm mới</span>
+          <Plus size={18} className={activeView === 'admin' ? 'fill-indigo-50/50' : ''} />
+          <span className="text-[9px] font-bold">Thêm mới</span>
         </button>
         <button 
           onClick={() => { setActiveView('tests'); setTestType(null); }}
-          className={`flex flex-col items-center gap-1 px-4 py-1 rounded-xl transition-all ${activeView === 'tests' ? 'text-orange-500' : 'text-slate-400'}`}
+          className={`flex flex-col items-center gap-1 px-2.5 py-1 rounded-xl transition-all ${activeView === 'tests' ? 'text-orange-500' : 'text-slate-400'}`}
         >
-          <Zap size={20} className={activeView === 'tests' ? 'fill-orange-50' : ''} />
-          <span className="text-[10px] font-bold">Luyện tập</span>
+          <Zap size={18} className={activeView === 'tests' ? 'fill-orange-50' : ''} />
+          <span className="text-[9px] font-bold">Luyện tập</span>
         </button>
       </div>
 
@@ -1474,122 +1751,196 @@ export default function App() {
         ) : activeView === 'learn' ? (
           /* LEARN View */
           <div className="space-y-6 animate-in fade-in duration-300">
-            {/* Quick Topic Switch Menu */}
-            <div className="bg-white p-5 rounded-[2rem] border border-slate-100 shadow-sm animate-in fade-in duration-300">
-              <div className="flex flex-col gap-3">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-black text-slate-500 uppercase tracking-wider flex items-center gap-1.5">
-                    <Sparkles size={14} className="text-emerald-500 animate-pulse" /> 
-                    Chọn chủ đề muốn học:
-                  </span>
-                  <span className="text-[10px] font-bold text-slate-400">
-                    {categories.length} chủ đề có sẵn
-                  </span>
-                </div>
-                
-                {/* Scrollable category pill menu */}
-                <div className="flex flex-wrap gap-2 pt-1 border-b border-slate-50 pb-3">
-                  <button
-                    onClick={() => {
-                      setLearnSelectedCategory('all');
-                      const filtered = savedSentences.filter(s => learnSelectedDifficulty === 'all' || (s.difficulty || 'basic') === learnSelectedDifficulty);
-                      if (result) {
-                        if (filtered.length > 0) {
-                          setResult(filtered[0]);
-                        } else {
-                          setResult(null);
-                        }
-                      }
-                    }}
-                    className={`px-4 py-2 rounded-xl text-xs font-bold transition-all duration-200 cursor-pointer ${
-                      learnSelectedCategory === 'all'
-                        ? 'bg-emerald-600 text-white shadow-md shadow-emerald-100/50'
-                        : 'bg-slate-50 text-slate-500 hover:bg-slate-100 hover:text-slate-700'
-                    }`}
-                  >
-                    Tất cả chủ đề ({savedSentences.length})
-                  </button>
-                  {categories.map((c) => {
-                    const count = savedSentences.filter(s => s.categoryId === c.id).length;
-                    return (
-                      <button
-                        key={c.id}
-                        onClick={() => {
-                          setLearnSelectedCategory(c.id);
-                          const filtered = savedSentences.filter((s) => s.categoryId === c.id && (learnSelectedDifficulty === 'all' || (s.difficulty || 'basic') === learnSelectedDifficulty));
-                          if (result) {
-                            if (filtered.length > 0) {
-                              setResult(filtered[0]);
-                            } else {
-                              setResult(null);
-                            }
-                          }
-                        }}
-                        className={`px-4 py-2 rounded-xl text-xs font-bold transition-all duration-200 cursor-pointer ${
-                          learnSelectedCategory === c.id
-                            ? 'bg-emerald-600 text-white shadow-md shadow-emerald-100/50'
-                            : 'bg-slate-50 text-slate-500 hover:bg-slate-100 hover:text-slate-700'
-                        }`}
-                      >
-                        {c.name} ({count})
-                      </button>
-                    );
-                  })}
-                </div>
+            {/* Elegant Header with Settings Trigger */}
+            <div className="bg-white p-6 rounded-[2rem] border border-slate-100 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-4 animate-in fade-in duration-300">
+              <div className="space-y-1">
+                <h1 className="text-xl md:text-2xl font-black text-slate-800 tracking-tight flex items-center gap-2">
+                  <BookOpen className="text-emerald-500 shrink-0" size={24} /> Học tập chuyên sâu
+                </h1>
+                <p className="text-xs text-slate-400 font-semibold uppercase tracking-wider flex items-center flex-wrap gap-2">
+                  <span>Chủ đề: <strong className="text-emerald-600">{learnSelectedCategory === 'all' ? 'Tất cả chủ đề' : (categories.find(c => c.id === learnSelectedCategory)?.name || 'Chung')}</strong></span>
+                  <span className="text-slate-300">•</span>
+                  <span>Mức độ: <strong className="text-amber-600">{
+                    learnSelectedDifficulty === 'all' ? 'Tất cả mức độ' :
+                    learnSelectedDifficulty === 'basic' ? '⭐ Cơ bản' :
+                    learnSelectedDifficulty === 'easy' ? '⭐⭐ Dễ' :
+                    learnSelectedDifficulty === 'medium' ? '⭐⭐⭐ Trung bình' : '⭐⭐⭐⭐ Khó'
+                  }</strong></span>
+                </p>
+              </div>
+              <button
+                onClick={() => setIsLearnSettingsOpen(true)}
+                className="flex items-center justify-center gap-2 px-5 py-3 bg-emerald-55 text-emerald-700 font-bold rounded-2xl hover:bg-emerald-100 transition-all border border-emerald-100/50 text-xs uppercase tracking-wider cursor-pointer shadow-sm active:scale-95 shrink-0"
+              >
+                <SlidersHorizontal size={14} /> Thay đổi chủ đề / Mức độ
+              </button>
+            </div>
 
-                {/* Easy/Difficutly selector */}
-                <div className="flex flex-col gap-2 pt-1">
-                  <span className="text-xs font-black text-slate-500 uppercase tracking-wider flex items-center gap-1.5">
-                    <Zap size={14} className="text-amber-500" />
-                    Lọc theo mức độ khó:
-                  </span>
-                  <div className="flex flex-wrap gap-2">
-                    {[
-                      { id: 'all', label: 'Tất cả mức độ' },
-                      { id: 'basic', label: '⭐ Cơ bản' },
-                      { id: 'easy', label: '⭐⭐ Dễ' },
-                      { id: 'medium', label: '⭐⭐⭐ Trung bình' },
-                      { id: 'hard', label: '⭐⭐⭐⭐ Khó' }
-                    ].map((diff) => {
-                      const count = savedSentences.filter(s => {
-                        const matchesCategory = learnSelectedCategory === 'all' || s.categoryId === learnSelectedCategory;
-                        const sDiff = s.difficulty || 'basic';
-                        return matchesCategory && (diff.id === 'all' || sDiff === diff.id);
-                      }).length;
-                      
-                      return (
-                        <button
-                          key={diff.id}
-                          onClick={() => {
-                            setLearnSelectedDifficulty(diff.id);
-                            const filtered = savedSentences.filter(s => {
+            {/* Modal for Choose Topic & Difficulty */}
+            <AnimatePresence>
+              {isLearnSettingsOpen && (
+                <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+                  {/* Backdrop */}
+                  <motion.div 
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    exit={{ opacity: 0 }}
+                    onClick={() => setIsLearnSettingsOpen(false)}
+                    className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm"
+                  />
+                  
+                  {/* Modal Card */}
+                  <motion.div 
+                    initial={{ opacity: 0, scale: 0.95, y: 15 }}
+                    animate={{ opacity: 1, scale: 1, y: 0 }}
+                    exit={{ opacity: 0, scale: 0.95, y: 15 }}
+                    transition={{ type: "spring", duration: 0.4 }}
+                    className="relative bg-white rounded-[2.5rem] border border-slate-100 shadow-2xl w-full max-w-2xl overflow-hidden z-10 flex flex-col max-h-[85vh]"
+                  >
+                    {/* Header */}
+                    <div className="p-6 md:p-8 border-b border-slate-100 flex items-center justify-between shrink-0">
+                      <div className="space-y-1">
+                        <span className="text-[10px] font-black text-emerald-600 bg-emerald-50 px-3 py-1 rounded-full uppercase tracking-widest">
+                          Cấu hình học tập
+                        </span>
+                        <h2 className="text-xl font-bold text-slate-800">Chọn chủ đề & Mức độ khó</h2>
+                      </div>
+                      <button 
+                        onClick={() => setIsLearnSettingsOpen(false)}
+                        className="p-2.5 bg-slate-50 text-slate-400 hover:text-slate-600 hover:bg-slate-150 rounded-full transition-all cursor-pointer"
+                      >
+                        <X size={18} />
+                      </button>
+                    </div>
+
+                    {/* Content */}
+                    <div className="p-6 md:p-8 overflow-y-auto space-y-6 flex-1 custom-scrollbar">
+                      {/* Topic Selector Block */}
+                      <div className="space-y-3">
+                        <span className="text-xs font-black text-slate-500 uppercase tracking-wider flex items-center gap-1.5">
+                          <Sparkles size={14} className="text-emerald-500 animate-pulse" /> 
+                          Chọn chủ đề học:
+                        </span>
+                        
+                        <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                          <button
+                            onClick={() => {
+                              setLearnSelectedCategory('all');
+                              const filtered = savedSentences.filter(s => learnSelectedDifficulty === 'all' || (s.difficulty || 'basic') === learnSelectedDifficulty);
+                              if (result) {
+                                if (filtered.length > 0) {
+                                  setResult(filtered[0]);
+                                } else {
+                                  setResult(null);
+                                }
+                              }
+                            }}
+                            className={`px-4 py-3 rounded-2xl text-xs font-bold transition-all duration-200 cursor-pointer text-left ${
+                              learnSelectedCategory === 'all'
+                                ? 'bg-emerald-600 text-white shadow-md shadow-emerald-100/50'
+                                : 'bg-slate-50 text-slate-500 hover:bg-slate-100 hover:text-slate-700 border border-transparent hover:border-slate-200'
+                            }`}
+                          >
+                            <span className="block font-black truncate">Tất cả chủ đề</span>
+                            <span className="text-[10px] opacity-80 mt-0.5 block font-medium">({savedSentences.length} câu)</span>
+                          </button>
+                          {categories.map((c) => {
+                            const count = savedSentences.filter(s => s.categoryId === c.id).length;
+                            return (
+                              <button
+                                key={c.id}
+                                onClick={() => {
+                                  setLearnSelectedCategory(c.id);
+                                  const filtered = savedSentences.filter((s) => s.categoryId === c.id && (learnSelectedDifficulty === 'all' || (s.difficulty || 'basic') === learnSelectedDifficulty));
+                                  if (result) {
+                                    if (filtered.length > 0) {
+                                      setResult(filtered[0]);
+                                    } else {
+                                      setResult(null);
+                                    }
+                                  }
+                                }}
+                                className={`px-4 py-3 rounded-2xl text-xs font-bold transition-all duration-200 cursor-pointer text-left ${
+                                  learnSelectedCategory === c.id
+                                    ? 'bg-emerald-600 text-white shadow-md shadow-emerald-100/50'
+                                    : 'bg-slate-50 text-slate-500 hover:bg-slate-100 hover:text-slate-705 border border-transparent hover:border-slate-200'
+                                }`}
+                              >
+                                <span className="block font-black truncate">{c.name}</span>
+                                <span className="text-[10px] opacity-80 mt-0.5 block font-medium">({count} câu)</span>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+
+                      {/* Difficulty Selector Block */}
+                      <div className="space-y-3 pt-4 border-t border-slate-100">
+                        <span className="text-xs font-black text-slate-500 uppercase tracking-wider flex items-center gap-1.5 flex-wrap">
+                          <Zap size={14} className="text-amber-500" />
+                          Chọn mức độ khó:
+                        </span>
+                        <div className="grid grid-cols-2 gap-2">
+                          {[
+                            { id: 'all', label: 'Tất cả mức độ' },
+                            { id: 'basic', label: '⭐ Cơ bản' },
+                            { id: 'easy', label: '⭐⭐ Dễ' },
+                            { id: 'medium', label: '⭐⭐⭐ Trung bình' },
+                            { id: 'hard', label: '⭐⭐⭐⭐ Khó' }
+                          ].map((diff) => {
+                            const count = savedSentences.filter(s => {
                               const matchesCategory = learnSelectedCategory === 'all' || s.categoryId === learnSelectedCategory;
                               const sDiff = s.difficulty || 'basic';
-                              const matchesDiff = diff.id === 'all' || sDiff === diff.id;
-                              return matchesCategory && matchesDiff;
-                            });
-                            if (result) {
-                              if (filtered.length > 0) {
-                                setResult(filtered[0]);
-                              } else {
-                                setResult(null);
-                              }
-                            }
-                          }}
-                          className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all duration-200 cursor-pointer ${
-                            learnSelectedDifficulty === diff.id
-                              ? 'bg-amber-500 text-white shadow-md shadow-amber-100'
-                              : 'bg-slate-50 text-slate-500 hover:bg-slate-100 hover:text-slate-700'
-                          }`}
-                        >
-                          {diff.label} ({count})
-                        </button>
-                      );
-                    })}
-                  </div>
+                              return matchesCategory && (diff.id === 'all' || sDiff === diff.id);
+                            }).length;
+                            
+                            return (
+                              <button
+                                key={diff.id}
+                                onClick={() => {
+                                  setLearnSelectedDifficulty(diff.id);
+                                  const filtered = savedSentences.filter(s => {
+                                    const matchesCategory = learnSelectedCategory === 'all' || s.categoryId === learnSelectedCategory;
+                                    const sDiff = s.difficulty || 'basic';
+                                    const matchesDiff = diff.id === 'all' || sDiff === diff.id;
+                                    return matchesCategory && matchesDiff;
+                                  });
+                                  if (result) {
+                                    if (filtered.length > 0) {
+                                      setResult(filtered[0]);
+                                    } else {
+                                      setResult(null);
+                                    }
+                                  }
+                                }}
+                                className={`px-4 py-3 rounded-2xl text-xs font-bold transition-all duration-200 cursor-pointer text-left flex justify-between items-center ${
+                                  learnSelectedDifficulty === diff.id
+                                    ? 'bg-amber-500 text-white shadow-md shadow-amber-100'
+                                    : 'bg-slate-50 text-slate-500 hover:bg-slate-100 hover:text-slate-700 border border-transparent hover:border-slate-200'
+                                }`}
+                              >
+                                <span className="font-black">{diff.label}</span>
+                                <span className="text-[10px] opacity-80 font-medium">({count} câu)</span>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Footer */}
+                    <div className="p-6 md:p-8 bg-slate-50 border-t border-slate-100 flex justify-end shrink-0">
+                      <button 
+                        onClick={() => setIsLearnSettingsOpen(false)}
+                        className="px-6 py-2.5 bg-emerald-600 text-white text-sm font-bold rounded-2xl hover:bg-emerald-700 active:scale-95 transition-all shadow-lg shadow-emerald-100 cursor-pointer"
+                      >
+                        Xác nhận và Học ngay
+                      </button>
+                    </div>
+                  </motion.div>
                 </div>
-              </div>
-            </div>
+              )}
+            </AnimatePresence>
 
             {!result ? (
               <div className="text-center py-20 bg-white rounded-[3rem] border border-slate-100 shadow-sm max-w-2xl mx-auto px-6">
@@ -1649,7 +2000,8 @@ export default function App() {
                   const totalCount = learnSentences.length;
                   
                   return (
-                    <div className="flex flex-col md:flex-row items-center justify-between gap-4 bg-white p-4 rounded-2xl border border-slate-100 shadow-sm">
+                    <>
+                      <div className="flex flex-col md:flex-row items-center justify-between gap-4 bg-white p-4 rounded-2xl border border-slate-100 shadow-sm animate-in fade-in duration-300">
                       {/* Left Block: List & Index Counter */}
                       <div className="flex items-center gap-3 w-full md:w-auto justify-between md:justify-start">
                         <button 
@@ -1697,11 +2049,9 @@ export default function App() {
                       <span className="text-xs font-bold text-emerald-600 bg-emerald-50 px-3 py-2 rounded-xl uppercase tracking-wider w-full md:w-auto text-center border border-emerald-100/30">
                         Chủ đề: {categories.find(c => c.id === (result as any).categoryId)?.name || 'Chung'}
                       </span>
-                    </div>
-                  );
-                })()}
+                      </div>
 
-                <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
+                      <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
                   {/* Left Column: Chữ tiếng Trung, Pinyin, và Dịch nghĩa */}
                   <div className="lg:col-span-6 space-y-6 lg:sticky lg:top-24">
                     <div className="sleek-card bg-white relative overflow-hidden transition-all shadow-md">
@@ -1730,6 +2080,51 @@ export default function App() {
                         </div>
                       </div>
                       
+                      {/* Dynamic Vector Illustration Card */}
+                      {result.illustrationSvg ? (
+                        <div className="w-full flex justify-center mb-6">
+                          <div 
+                            className="w-full max-w-[200px] aspect-square rounded-2xl overflow-hidden p-3 bg-slate-50 border border-slate-100/80 flex items-center justify-center shadow-inner relative group select-none transition-transform hover:scale-105 duration-300" 
+                            dangerouslySetInnerHTML={{ __html: result.illustrationSvg }} 
+                          />
+                        </div>
+                      ) : (
+                        user && 'id' in result && (
+                          <div className="mb-6 p-4 rounded-2xl border border-dashed border-slate-200 bg-slate-50 flex flex-col items-center justify-center text-center">
+                            {isGeneratingIllustration ? (
+                              <div className="flex flex-col items-center gap-2.5 py-2">
+                                <Loader2 className="text-emerald-500 animate-spin" size={24} />
+                                <p className="text-xs text-slate-500 font-bold animate-pulse">Đang phác họa tranh vector AI...</p>
+                              </div>
+                            ) : (
+                              <>
+                                <Sparkles className="text-emerald-500 mb-1.5 animate-bounce" size={18} />
+                                <p className="text-[11px] text-slate-500 font-semibold mb-2.5">Trực quan hóa câu nói bằng tranh minh họa Vector AI</p>
+                                <button
+                                  onClick={async () => {
+                                    setIsGeneratingIllustration(true);
+                                    try {
+                                      const svg = await generateIllustrationSvg(result.chinese, result.meaning);
+                                      await updateDoc(doc(db, 'saved_sentences', (result as SavedSentence).id), {
+                                        illustrationSvg: svg
+                                      });
+                                      setResult(prev => prev ? { ...prev, illustrationSvg: svg } as SavedSentence : null);
+                                    } catch (err) {
+                                      console.error("Lỗi vẽ tranh:", err);
+                                    } finally {
+                                      setIsGeneratingIllustration(false);
+                                    }
+                                  }}
+                                  className="px-4 py-1.5 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white font-bold text-xs rounded-xl transition-all shadow-md shadow-emerald-100 flex items-center gap-1.5 cursor-pointer border-none"
+                                >
+                                  🎨 Vẽ minh họa AI
+                                </button>
+                              </>
+                            )}
+                          </div>
+                        )
+                      )}
+
                       <div className="mb-6 md:mb-8">
                         <p className="text-4xl md:text-6xl font-bold text-slate-800 tracking-[0.12em] mb-3 md:mb-4 leading-normal break-words">{renderHighlightedChinese(result.chinese, (result as any).id)}</p>
                         <p className="text-base md:text-xl text-slate-500 font-medium italic break-words">{result.pinyin}</p>
@@ -1920,8 +2315,59 @@ export default function App() {
                     )}
                   </div>
                 </div>
-              </div>
-            )}
+
+                {/* Floating Bottom Pagination Panel */}
+                <div className="fixed bottom-20 lg:bottom-8 left-1/2 -translate-x-1/2 z-40 bg-white/95 backdrop-blur-md border border-slate-200/80 shadow-2xl px-4 py-2.5 rounded-full flex items-center gap-3 animate-in fade-in slide-in-from-bottom-5 duration-300">
+                  <button 
+                    onClick={() => {
+                      setResult(null);
+                      window.scrollTo({ top: 0, behavior: 'smooth' });
+                    }}
+                    title="Quay lại danh sách"
+                    className="p-2 text-slate-500 hover:text-slate-800 bg-slate-100 hover:bg-slate-200 rounded-full transition-all cursor-pointer flex items-center justify-center shrink-0"
+                  >
+                    <List size={16} />
+                  </button>
+                  
+                  <div className="w-px h-5 bg-slate-200 shrink-0" />
+                  
+                  <button
+                    onClick={() => {
+                      if (totalCount === 0) return;
+                      const prevIndex = (currentIndex - 1 + totalCount) % totalCount;
+                      setResult(learnSentences[prevIndex]);
+                      window.scrollTo({ top: 0, behavior: 'smooth' });
+                    }}
+                    disabled={totalCount <= 1}
+                    className="flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-black uppercase tracking-wider text-emerald-700 bg-emerald-50 hover:bg-emerald-600 hover:text-white disabled:opacity-40 disabled:pointer-events-none rounded-full transition-all duration-200 border border-emerald-100/50 cursor-pointer shrink-0"
+                  >
+                    ← Trước
+                  </button>
+                  
+                  <div className="flex items-center gap-1 font-extrabold text-xs text-slate-400 bg-slate-50/50 px-2.5 py-1 rounded-full border border-slate-100 min-w-[50px] justify-center shrink-0">
+                    <span className="text-slate-800">{currentNo}</span>
+                    <span className="text-slate-250">/</span>
+                    <span>{totalCount}</span>
+                  </div>
+                  
+                  <button
+                    onClick={() => {
+                      if (totalCount === 0) return;
+                      const nextIndex = (currentIndex + 1) % totalCount;
+                      setResult(learnSentences[nextIndex]);
+                      window.scrollTo({ top: 0, behavior: 'smooth' });
+                    }}
+                    disabled={totalCount <= 1}
+                    className="flex items-center gap-1.5 px-4 py-1.5 text-xs font-black uppercase tracking-wider text-white bg-emerald-600 hover:bg-emerald-700 disabled:opacity-40 disabled:pointer-events-none rounded-full transition-all duration-200 shadow-lg shadow-emerald-100 cursor-pointer shrink-0"
+                  >
+                    Kế tiếp →
+                  </button>
+                </div>
+              </>
+            );
+          })()}
+        </div>
+      )}
           </div>
         ) : activeView === 'admin' ? (
           /* ADMIN View */
@@ -2178,6 +2624,51 @@ export default function App() {
                           </div>
                        </div>
                        
+                       {/* Dynamic Vector Illustration Card */}
+                       {result.illustrationSvg ? (
+                         <div className="w-full flex justify-center mb-6">
+                           <div 
+                             className="w-full max-w-[200px] aspect-square rounded-2xl overflow-hidden p-3 bg-slate-50 border border-slate-100/80 flex items-center justify-center shadow-inner relative group select-none transition-transform hover:scale-105 duration-300" 
+                             dangerouslySetInnerHTML={{ __html: result.illustrationSvg }} 
+                           />
+                         </div>
+                       ) : (
+                         user && 'id' in result && (
+                           <div className="mb-6 p-4 rounded-2xl border border-dashed border-slate-200 bg-slate-50 flex flex-col items-center justify-center text-center">
+                             {isGeneratingIllustration ? (
+                               <div className="flex flex-col items-center gap-2.5 py-2">
+                                 <Loader2 className="text-emerald-500 animate-spin" size={24} />
+                                 <p className="text-xs text-slate-500 font-bold animate-pulse">Đang phác họa tranh vector AI...</p>
+                               </div>
+                             ) : (
+                               <>
+                                 <Sparkles className="text-emerald-500 mb-1.5 animate-bounce" size={18} />
+                                 <p className="text-[11px] text-slate-500 font-semibold mb-2.5">Trực quan hóa câu nói bằng tranh minh họa Vector AI</p>
+                                 <button
+                                   onClick={async () => {
+                                     setIsGeneratingIllustration(true);
+                                     try {
+                                       const svg = await generateIllustrationSvg(result.chinese, result.meaning);
+                                       await updateDoc(doc(db, 'saved_sentences', (result as SavedSentence).id), {
+                                         illustrationSvg: svg
+                                       });
+                                       setResult(prev => prev ? { ...prev, illustrationSvg: svg } as SavedSentence : null);
+                                     } catch (err) {
+                                       console.error("Lỗi vẽ tranh:", err);
+                                     } finally {
+                                       setIsGeneratingIllustration(false);
+                                     }
+                                   }}
+                                   className="px-4 py-1.5 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white font-bold text-xs rounded-xl transition-all shadow-md shadow-emerald-100 flex items-center gap-1.5 cursor-pointer border-none"
+                                 >
+                                   🎨 Vẽ minh họa AI
+                                 </button>
+                               </>
+                             )}
+                           </div>
+                         )
+                       )}
+
                         <div className="mb-6 md:mb-8 relative" onMouseUp={handleSelection}>
                           <p className="text-4xl md:text-6xl font-bold text-slate-800 tracking-[0.12em] mb-3 md:mb-4 leading-normal break-words">{renderHighlightedChinese(result.chinese, (result as any).id)}</p>
                           <p className="text-base md:text-xl text-slate-500 font-medium italic break-words">{result.pinyin}</p>
@@ -2501,6 +2992,157 @@ export default function App() {
                  </motion.div>
                )}
             </div>
+          </div>
+        ) : activeView === 'progress' ? (
+          /* Chuyên cần View */
+          <div className="space-y-6 md:space-y-8 animate-in fade-in duration-300">
+             {/* Header */}
+             <div className="bg-white p-6 md:p-8 rounded-[2rem] shadow-sm border border-slate-100 flex flex-col md:flex-row md:items-center justify-between gap-6">
+               <div className="space-y-1">
+                 <h1 className="text-2xl md:text-3xl font-black text-slate-800 tracking-tight flex items-center gap-3">
+                   <Flame className="text-orange-500 fill-orange-500/10" size={28} /> Theo dõi chuyên cần
+                 </h1>
+                 <p className="text-slate-500 text-sm md:text-base font-medium">Theo dõi thời gian học tập, giữ chuỗi ngày học liên tiếp và kiểm tra tiến trình bản thân.</p>
+               </div>
+               {user && (
+                 <div className="flex items-center gap-3 bg-orange-50 text-orange-600 px-5 py-3 rounded-2xl border border-orange-100/50">
+                    <Zap className="fill-orange-500 text-orange-500 shrink-0" size={24} />
+                    <div>
+                      <div className="text-xs font-black uppercase tracking-wider opacity-75 font-bold">Chuỗi hiện tại</div>
+                      <div className="text-lg font-black">{(() => {
+                        const streak = calculateStudyStreak(studySessions, activeSecondsToday);
+                        return `${streak} ngày liên tiếp`;
+                      })()}</div>
+                    </div>
+                 </div>
+               )}
+             </div>
+
+             {user ? (
+               <div className="bg-white rounded-[2rem] border border-slate-100 p-6 md:p-8 shadow-sm grid grid-cols-1 lg:grid-cols-3 gap-8">
+                 {/* Today's Stats & Ticker */}
+                 <div className="flex flex-col justify-between space-y-4">
+                   <div>
+                     <div className="flex items-center gap-2 mb-2">
+                       <div className="p-2 bg-emerald-50 text-emerald-600 rounded-xl">
+                         <BookOpen size={20} />
+                       </div>
+                       <h3 className="text-lg font-bold text-slate-800 tracking-tight">Học tập hôm nay</h3>
+                     </div>
+                     <p className="text-slate-400 text-xs font-semibold uppercase tracking-wider mb-4">Mục tiêu hằng ngày: ít nhất 30 phút</p>
+                     
+                     {/* Timer text */}
+                     <div className="space-y-1">
+                       <p className="text-3xl md:text-4xl font-extrabold text-slate-800 tracking-tight">
+                         {(() => {
+                           const mins = Math.floor(activeSecondsToday / 60);
+                           const secs = activeSecondsToday % 60;
+                           return `${mins} phút ${secs} giây`;
+                         })()}
+                       </p>
+                       <p className="text-sm font-semibold text-slate-500">
+                         {activeSecondsToday >= 1800 ? (
+                           <span className="text-emerald-600 flex items-center gap-1.5 font-bold">
+                             <Check size={16} /> Đạt mục tiêu học tập hôm nay! 🎉
+                           </span>
+                         ) : (
+                           <span className="text-slate-400">
+                             Cần {Math.ceil((1800 - activeSecondsToday) / 60)} phút nữa để đạt mục tiêu hằng ngày.
+                           </span>
+                         )}
+                       </p>
+                     </div>
+                   </div>
+
+                   {/* Elegant Progress Bar */}
+                   <div className="space-y-2 pt-2">
+                     <div className="flex justify-between items-center text-xs text-slate-500 font-bold">
+                       <span>Tiến trình</span>
+                       <span>{Math.min(100, Math.round((activeSecondsToday / 1800) * 100))}%</span>
+                     </div>
+                     <div className="w-full h-3 bg-slate-100 rounded-full overflow-hidden">
+                       <div 
+                         className="h-full bg-emerald-500 transition-all duration-300"
+                         style={{ width: `${Math.min(100, Math.round((activeSecondsToday / 1800) * 100))}%` }}
+                       />
+                     </div>
+                   </div>
+                 </div>
+
+                 {/* Consistency Flame (Streak tracker) */}
+                 <div className="flex flex-col justify-center items-center py-6 border-y lg:border-y-0 lg:border-x border-slate-150 border-dashed">
+                   <div className="relative mb-2">
+                     <div className="p-5 bg-orange-50 text-orange-500 rounded-[2rem] transition-transform hover:scale-110">
+                       <Flame size={48} className="fill-orange-500/20" />
+                     </div>
+                     <span className="absolute -top-1 -right-1 bg-amber-400 text-white p-1 rounded-full text-[10px]">
+                       <Zap size={10} className="fill-white" />
+                     </span>
+                   </div>
+                   
+                   <div className="text-center space-y-1 mt-2">
+                     <h4 className="text-sm font-black uppercase text-slate-400 tracking-wider">Chuỗi chuyên cần</h4>
+                     <p className="text-3xl font-black text-slate-800 tracking-tight">
+                       {(() => {
+                         const streak = calculateStudyStreak(studySessions, activeSecondsToday);
+                         return `${streak} ngày`;
+                       })()}
+                     </p>
+                     <p className="text-xs text-slate-400 max-w-[200px] font-medium mx-auto">Học tối thiểu 30 phút mỗi ngày để duy trì chuỗi học tập!</p>
+                   </div>
+                 </div>
+
+                 {/* Attendance History (Last 7 Days calendar squares) */}
+                 <div className="flex flex-col justify-between space-y-4">
+                   <div>
+                     <div className="flex items-center gap-2 mb-1">
+                       <h4 className="text-sm font-bold text-slate-800 tracking-tight">Nhật ký 7 ngày gần đây</h4>
+                       <span className="text-[10.5px] font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full">
+                         Duy trì đều đặn
+                       </span>
+                     </div>
+                     <p className="text-xs text-slate-400 font-medium">Theo dõi hoạt động hằng ngày để tự đánh giá nỗ lực tự học.</p>
+                   </div>
+
+                   {/* 7 Days tracker boxes */}
+                   <div className="grid grid-cols-7 gap-2 pt-2">
+                     {getDailyHistoryData().map((day, idx) => {
+                       let titleTip = `${day.label}: ${Math.floor(day.duration / 60)} phút học`;
+                       
+                       let colorClass = "bg-slate-50 border-slate-200/50 text-slate-400";
+                       if (day.duration > 0 && day.duration < 1800) {
+                         colorClass = "bg-amber-500/15 border-amber-300/60 text-amber-600";
+                       } else if (day.duration >= 1800) {
+                         colorClass = "bg-emerald-600 border-emerald-500 text-white";
+                       }
+                       
+                       return (
+                         <div 
+                           key={idx} 
+                           title={titleTip} 
+                           className={`flex flex-col items-center p-2 rounded-2xl border text-center transition-all hover:translate-y-[-2px] hover:shadow-md cursor-help ${colorClass}`}
+                         >
+                           <span className="text-[10px] font-black uppercase tracking-wider">{day.dayOfWeek}</span>
+                           <div className="my-1.5 font-bold text-xs">{day.label.split('/')[0]}</div>
+                           
+                           <div className={`w-1.5 h-1.5 rounded-full ${day.isGoalMet ? 'bg-white' : day.duration > 0 ? 'bg-amber-500' : 'bg-slate-300'}`} />
+                           
+                           <span className="text-[9px] font-semibold mt-1 opacity-85">{Math.floor(day.duration / 60)}p</span>
+                         </div>
+                       );
+                     })}
+                   </div>
+                 </div>
+               </div>
+             ) : (
+               <div className="py-20 text-center bg-white rounded-[3rem] border border-slate-100 shadow-sm max-w-xl mx-auto space-y-4">
+                 <div className="w-16 h-16 bg-slate-50 text-slate-400 rounded-full flex items-center justify-center mx-auto mb-4">
+                   <Lock size={32} />
+                 </div>
+                 <h2 className="text-xl font-bold text-slate-800">Yêu cầu đăng nhập</h2>
+                 <p className="text-sm text-slate-500 px-8">Vui lòng đăng nhập tài khoản của bạn để bắt đầu tính thời gian học và lưu tích lũy ngày chuyên cần.</p>
+               </div>
+             )}
           </div>
         ) : (
           /* Test Center View */

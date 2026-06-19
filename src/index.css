@@ -17,6 +17,13 @@ body {
   background-color: var(--color-sleek-bg);
   color: var(--color-sleek-text);
   font-family: var(--font-sans);
+  overflow-x: hidden;
+  max-width: 100%;
+}
+
+html {
+  overflow-x: hidden;
+  max-width: 100%;
 }
 
 .sleek-card {
