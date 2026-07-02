@@ -3,6 +3,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { 
   Loader2,
   ChevronRight,
+  ChevronLeft,
   Flame,
   Heart,
   Volume2,
@@ -25,7 +26,9 @@ import {
   List,
   Lock,
   X,
-  SlidersHorizontal
+  SlidersHorizontal,
+  Eye,
+  EyeOff
 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import { translateAndExplain, TranslationResult, generateIllustrationSvg } from './services/geminiService';
@@ -205,12 +208,100 @@ export default function App() {
   const [expandedSentence, setExpandedSentence] = useState<string | null>(null);
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [speakSlowGlobal, setSpeakSlowGlobal] = useState(false);
+  const [voiceType, setVoiceType] = useState<'female' | 'male' | 'child'>('female');
+  const [availableVoices, setAvailableVoices] = useState<SpeechSynthesisVoice[]>([]);
+  const [selectedVoiceURI, setSelectedVoiceURI] = useState<string>('');
+
+  useEffect(() => {
+    const loadVoices = () => {
+      if ('speechSynthesis' in window) {
+        const voices = window.speechSynthesis.getVoices();
+        const zhVoices = voices.filter(v => 
+          v.lang.startsWith('zh') || 
+          v.lang.includes('CN') || 
+          v.lang.includes('HK') || 
+          v.lang.includes('TW')
+        );
+        setAvailableVoices(zhVoices);
+      }
+    };
+    loadVoices();
+    if ('speechSynthesis' in window) {
+      window.speechSynthesis.onvoiceschanged = loadVoices;
+    }
+  }, []);
+
+  useEffect(() => {
+    if (availableVoices.length > 0 && !selectedVoiceURI) {
+      const defaultFemale = availableVoices.find(v => {
+        const nameLower = v.name.toLowerCase();
+        return nameLower.includes('female') || nameLower.includes('xiaoxiao') || nameLower.includes('tingting');
+      });
+      if (defaultFemale) {
+        setSelectedVoiceURI(defaultFemale.voiceURI);
+      } else {
+        setSelectedVoiceURI(availableVoices[0].voiceURI);
+      }
+    }
+  }, [availableVoices, selectedVoiceURI]);
+
+  const selectGenderVoice = (type: 'female' | 'male' | 'child') => {
+    setVoiceType(type);
+    if (availableVoices.length > 0) {
+      let matched: SpeechSynthesisVoice | undefined = undefined;
+      if (type === 'male') {
+        matched = availableVoices.find(v => {
+          const nameLower = v.name.toLowerCase();
+          return nameLower.includes('male') || 
+                 nameLower.includes('man') || 
+                 nameLower.includes('yunyang') || 
+                 nameLower.includes('kangkang') || 
+                 nameLower.includes('yunjian') || 
+                 nameLower.includes('yunxi') ||
+                 nameLower.includes('shaanxi') ||
+                 nameLower.includes('binbin') ||
+                 nameLower.includes('qiang') ||
+                 nameLower.includes('google zh-cn-x-cng') ||
+                 nameLower.includes('google zh-cn-x-cni');
+        });
+      } else if (type === 'child') {
+        matched = availableVoices.find(v => {
+          const nameLower = v.name.toLowerCase();
+          return nameLower.includes('child') || 
+                 nameLower.includes('kid') || 
+                 nameLower.includes('baby') || 
+                 nameLower.includes('young') ||
+                 nameLower.includes('xiaoyi') ||
+                 nameLower.includes('xiaonuo') ||
+                 nameLower.includes('xiaoxiao');
+        });
+      } else {
+        matched = availableVoices.find(v => {
+          const nameLower = v.name.toLowerCase();
+          return nameLower.includes('female') || 
+                 nameLower.includes('woman') || 
+                 nameLower.includes('xiaoxiao') || 
+                 nameLower.includes('huidi') || 
+                 nameLower.includes('yaoyao') || 
+                 nameLower.includes('xiaoyu') ||
+                 nameLower.includes('lili') ||
+                 nameLower.includes('tingting') ||
+                 nameLower.includes('lulu');
+        });
+      }
+      if (matched) {
+        setSelectedVoiceURI(matched.voiceURI);
+      }
+    }
+  };
   const [isEditingExplanation, setIsEditingExplanation] = useState(false);
   const [editableExplanation, setEditableExplanation] = useState('');
   const [noteText, setNoteText] = useState('');
   const [isEditingNote, setIsEditingNote] = useState(false);
   const [isLearnSettingsOpen, setIsLearnSettingsOpen] = useState(false);
   const [isGeneratingIllustration, setIsGeneratingIllustration] = useState(false);
+  const [hidePinyin, setHidePinyin] = useState(true);
+  const [hideMeaning, setHideMeaning] = useState(true);
   
   // Study tracking state
   const [studySessions, setStudySessions] = useState<StudySession[]>([]);
@@ -717,6 +808,83 @@ export default function App() {
      // Set speech rate: normal is 1.0, slow is 0.5
      const isSlow = forceSlow !== undefined ? forceSlow : speakSlowGlobal;
      utterance.rate = isSlow ? 0.5 : 1.0;
+     
+     try {
+       const voices = window.speechSynthesis.getVoices();
+       const zhVoices = voices.filter(v => 
+         v.lang.startsWith('zh') || 
+         v.lang.includes('CN') || 
+         v.lang.includes('HK') || 
+         v.lang.includes('TW')
+       );
+       
+       let targetVoice: SpeechSynthesisVoice | undefined = undefined;
+
+       // 1. If we have a specific chosen voice URI, try to use it
+       if (selectedVoiceURI) {
+         targetVoice = zhVoices.find(v => v.voiceURI === selectedVoiceURI);
+       }
+
+       // 2. Otherwise/Fallback: match based on voiceType
+       if (!targetVoice) {
+         if (voiceType === 'male') {
+           targetVoice = zhVoices.find(v => {
+             const nameLower = v.name.toLowerCase();
+             return nameLower.includes('male') || 
+                    nameLower.includes('man') || 
+                    nameLower.includes('yunyang') || 
+                    nameLower.includes('kangkang') || 
+                    nameLower.includes('yunjian') || 
+                    nameLower.includes('yunxi') ||
+                    nameLower.includes('shaanxi') ||
+                    nameLower.includes('binbin') ||
+                    nameLower.includes('qiang') ||
+                    nameLower.includes('google zh-cn-x-cng') ||
+                    nameLower.includes('google zh-cn-x-cni');
+           });
+         } else if (voiceType === 'child') {
+           targetVoice = zhVoices.find(v => {
+             const nameLower = v.name.toLowerCase();
+             return nameLower.includes('child') || 
+                    nameLower.includes('kid') || 
+                    nameLower.includes('baby') || 
+                    nameLower.includes('young') ||
+                    nameLower.includes('xiaoyi') ||
+                    nameLower.includes('xiaonuo') ||
+                    nameLower.includes('xiaoxiao');
+           });
+         } else {
+           targetVoice = zhVoices.find(v => {
+             const nameLower = v.name.toLowerCase();
+             return nameLower.includes('female') || 
+                    nameLower.includes('woman') || 
+                    nameLower.includes('xiaoxiao') || 
+                    nameLower.includes('huidi') || 
+                    nameLower.includes('yaoyao') || 
+                    nameLower.includes('xiaoyu') ||
+                    nameLower.includes('lili') ||
+                    nameLower.includes('tingting') ||
+                    nameLower.includes('lulu');
+           });
+         }
+       }
+
+       if (targetVoice) {
+         utterance.voice = targetVoice;
+       }
+
+       // Apply pitch adjustments as an enhancement or fallback
+       if (voiceType === 'male') {
+         utterance.pitch = 0.82; // Lower pitch
+       } else if (voiceType === 'child') {
+         utterance.pitch = 1.38; // Higher pitch
+         utterance.rate = isSlow ? 0.55 : 1.05;
+       } else {
+         utterance.pitch = 1.0;
+       }
+     } catch (e) {
+       console.error("Error setting speech voice:", e);
+     }
      
      utterance.onstart = () => setIsSpeaking(true);
      utterance.onend = () => setIsSpeaking(false);
@@ -1442,7 +1610,7 @@ export default function App() {
             </div>
         </div>
 
-        <div className="flex items-center gap-1 sm:gap-2 md:gap-8">
+        <div className="flex items-center gap-1.5 sm:gap-2 md:gap-4">
           {/* Audio Speed Control Toggle */}
           <div className="flex items-center gap-0.5 sm:gap-1 bg-slate-100 p-0.5 sm:p-1 rounded-xl border border-slate-200/40 shrink-0">
             <button
@@ -1463,6 +1631,92 @@ export default function App() {
             >
               🐢 Chậm
             </button>
+          </div>
+
+          {/* Voice Type Selection */}
+          <div className="flex items-center gap-1 bg-slate-100 p-0.5 sm:p-1 rounded-xl border border-slate-200/40 shrink-0">
+            <button
+              onClick={() => selectGenderVoice('female')}
+              className={`px-1.5 py-1 sm:px-2 sm:py-1 rounded-lg text-[9px] sm:text-[10px] font-black uppercase tracking-wider transition-all cursor-pointer ${
+                voiceType === 'female' ? 'bg-white text-rose-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'
+              }`}
+              title="Giọng đọc Nữ"
+            >
+              👩 Nữ
+            </button>
+            <button
+              onClick={() => selectGenderVoice('male')}
+              className={`px-1.5 py-1 sm:px-2 sm:py-1 rounded-lg text-[9px] sm:text-[10px] font-black uppercase tracking-wider transition-all cursor-pointer ${
+                voiceType === 'male' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'
+              }`}
+              title="Giọng đọc Nam"
+            >
+              👨 Nam
+            </button>
+            <button
+              onClick={() => selectGenderVoice('child')}
+              className={`px-1.5 py-1 sm:px-2 sm:py-1 rounded-lg text-[9px] sm:text-[10px] font-black uppercase tracking-wider transition-all cursor-pointer ${
+                voiceType === 'child' ? 'bg-white text-emerald-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'
+              }`}
+              title="Giọng trẻ em"
+            >
+              👶 Bé
+            </button>
+
+            {availableVoices.length > 0 && (
+              <select
+                value={selectedVoiceURI}
+                onChange={(e) => {
+                  const uri = e.target.value;
+                  setSelectedVoiceURI(uri);
+                  const voice = availableVoices.find(v => v.voiceURI === uri);
+                  if (voice) {
+                    const nameLower = voice.name.toLowerCase();
+                    if (
+                      nameLower.includes('male') || 
+                      nameLower.includes('man') || 
+                      nameLower.includes('yunyang') || 
+                      nameLower.includes('kangkang') || 
+                      nameLower.includes('yunjian') || 
+                      nameLower.includes('binbin') ||
+                      nameLower.includes('qiang') ||
+                      nameLower.includes('google zh-cn-x-cng') ||
+                      nameLower.includes('google zh-cn-x-cni')
+                    ) {
+                      setVoiceType('male');
+                    } else if (
+                      nameLower.includes('child') || 
+                      nameLower.includes('kid') || 
+                      nameLower.includes('baby') || 
+                      nameLower.includes('young') ||
+                      nameLower.includes('xiaoyi') ||
+                      nameLower.includes('xiaonuo')
+                    ) {
+                      setVoiceType('child');
+                    } else {
+                      setVoiceType('female');
+                    }
+                  }
+                }}
+                className="ml-1 px-1.5 py-0.5 sm:px-2 bg-white hover:bg-slate-50 border border-slate-200 text-[9px] sm:text-[10px] font-bold text-slate-600 rounded-lg outline-none focus:ring-1 focus:ring-emerald-500 cursor-pointer max-w-[65px] sm:max-w-[110px] truncate transition-colors"
+                title="Chọn giọng chi tiết từ thiết bị"
+              >
+                {availableVoices.map((voice) => {
+                  let displayName = voice.name
+                    .replace('Microsoft', 'MS')
+                    .replace('Online (Natural)', '')
+                    .replace('Google', 'GG')
+                    .replace('普通话（中国大陆）', 'Mandarin')
+                    .replace('國語（台灣）', 'TW')
+                    .replace('廣東話（香港）', 'HK');
+                  return (
+                    <option key={voice.voiceURI} value={voice.voiceURI}>
+                      {displayName}
+                    </option>
+                  );
+                })}
+              </select>
+            )}
           </div>
 
           <div className="hidden md:flex items-center gap-3">
@@ -1752,7 +2006,7 @@ export default function App() {
           /* LEARN View */
           <div className="space-y-6 animate-in fade-in duration-300">
             {/* Elegant Header with Settings Trigger */}
-            <div className="bg-white p-6 rounded-[2rem] border border-slate-100 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-4 animate-in fade-in duration-300">
+            <div className={`bg-white p-6 rounded-[2rem] border border-slate-100 shadow-sm flex-col sm:flex-row sm:items-center justify-between gap-4 animate-in fade-in duration-300 ${result ? 'hidden md:flex' : 'flex'}`}>
               <div className="space-y-1">
                 <h1 className="text-xl md:text-2xl font-black text-slate-800 tracking-tight flex items-center gap-2">
                   <BookOpen className="text-emerald-500 shrink-0" size={24} /> Học tập chuyên sâu
@@ -2001,54 +2255,106 @@ export default function App() {
                   
                   return (
                     <>
-                      <div className="flex flex-col md:flex-row items-center justify-between gap-4 bg-white p-4 rounded-2xl border border-slate-100 shadow-sm animate-in fade-in duration-300">
-                      {/* Left Block: List & Index Counter */}
-                      <div className="flex items-center gap-3 w-full md:w-auto justify-between md:justify-start">
+                      {/* Desktop Navigation Block */}
+                      <div className="hidden md:flex flex-col md:flex-row items-center justify-between gap-4 bg-white p-4 rounded-2xl border border-slate-100 shadow-sm animate-in fade-in duration-300">
+                        {/* Left Block: List & Index Counter */}
+                        <div className="flex items-center gap-3 w-full md:w-auto justify-between md:justify-start">
+                          <button 
+                            onClick={() => setResult(null)}
+                            className="flex items-center gap-2 text-xs font-black uppercase tracking-wider text-slate-500 hover:text-slate-800 bg-slate-100 hover:bg-slate-200 px-4 py-2.5 rounded-xl transition-all cursor-pointer"
+                          >
+                            <List size={14} /> Danh sách câu khác
+                          </button>
+                          
+                          <div className="flex items-center gap-1.5 font-extrabold text-sm text-slate-400 bg-slate-50 px-3.5 py-2 rounded-xl border border-slate-100">
+                            <span className="text-slate-800">{currentNo}</span>
+                            <span className="text-slate-300">/</span>
+                            <span>{totalCount}</span>
+                          </div>
+                        </div>
+
+                        {/* Middle Block: Prev / Next Navigation Buttons */}
+                        <div className="flex items-center gap-3 w-full md:w-auto justify-center">
+                          <button
+                            onClick={() => {
+                              if (totalCount === 0) return;
+                              const prevIndex = (currentIndex - 1 + totalCount) % totalCount;
+                              setResult(learnSentences[prevIndex]);
+                            }}
+                            disabled={totalCount <= 1}
+                            className="flex items-center gap-2 text-xs font-black uppercase tracking-wider text-emerald-700 hover:text-white bg-emerald-50 hover:bg-emerald-600 disabled:opacity-40 disabled:pointer-events-none px-5 py-2.5 rounded-xl transition-all duration-200 border border-emerald-100/50 hover:border-emerald-600 shadow-sm flex-1 md:flex-initial text-center justify-center cursor-pointer"
+                          >
+                            ← Câu trước
+                          </button>
+                          
+                          <button
+                            onClick={() => {
+                              if (totalCount === 0) return;
+                              const nextIndex = (currentIndex + 1) % totalCount;
+                              setResult(learnSentences[nextIndex]);
+                            }}
+                            disabled={totalCount <= 1}
+                            className="flex items-center gap-2 text-xs font-black uppercase tracking-wider text-emerald-700 hover:text-white bg-emerald-50 hover:bg-emerald-600 disabled:opacity-40 disabled:pointer-events-none px-5 py-2.5 rounded-xl transition-all duration-200 border border-emerald-100/50 hover:border-emerald-600 shadow-sm flex-1 md:flex-initial text-center justify-center cursor-pointer"
+                          >
+                            Câu kế tiếp →
+                          </button>
+                        </div>
+
+                        {/* Right Block: Active Topic Badge */}
+                        <span className="text-xs font-bold text-emerald-600 bg-emerald-50 px-3 py-2 rounded-xl uppercase tracking-wider w-full md:w-auto text-center border border-emerald-100/30">
+                          Chủ đề: {categories.find(c => c.id === (result as any).categoryId)?.name || 'Chung'}
+                        </span>
+                      </div>
+
+                      {/* Mobile Compact Navigation Block */}
+                      <div className="flex md:hidden items-center justify-between gap-2 bg-white p-3 rounded-2xl border border-slate-100 shadow-sm animate-in fade-in duration-300">
                         <button 
                           onClick={() => setResult(null)}
-                          className="flex items-center gap-2 text-xs font-black uppercase tracking-wider text-slate-500 hover:text-slate-800 bg-slate-100 hover:bg-slate-200 px-4 py-2.5 rounded-xl transition-all cursor-pointer"
+                          className="p-2.5 text-slate-500 hover:text-slate-800 bg-slate-50 hover:bg-slate-100 border border-slate-100/60 rounded-xl transition-all cursor-pointer"
+                          title="Danh sách câu khác"
                         >
-                          <List size={14} /> Danh sách câu khác
+                          <List size={16} />
                         </button>
-                        
-                        <div className="flex items-center gap-1.5 font-extrabold text-sm text-slate-400 bg-slate-50 px-3.5 py-2 rounded-xl border border-slate-100">
-                          <span className="text-slate-800">{currentNo}</span>
-                          <span className="text-slate-300">/</span>
-                          <span>{totalCount}</span>
+
+                        <div className="flex items-center gap-1">
+                          <button
+                            onClick={() => {
+                              if (totalCount === 0) return;
+                              const prevIndex = (currentIndex - 1 + totalCount) % totalCount;
+                              setResult(learnSentences[prevIndex]);
+                            }}
+                            disabled={totalCount <= 1}
+                            className="p-2 text-emerald-700 hover:text-emerald-900 bg-emerald-50 hover:bg-emerald-100 border border-emerald-100/40 rounded-xl disabled:opacity-40 disabled:pointer-events-none transition-all cursor-pointer"
+                            title="Câu trước"
+                          >
+                            <ChevronLeft size={16} />
+                          </button>
+
+                          <span className="text-xs font-black text-slate-700 bg-slate-50 px-2.5 py-1.5 rounded-lg border border-slate-100/60 min-w-[45px] text-center">
+                            {currentNo}/{totalCount}
+                          </span>
+
+                          <button
+                            onClick={() => {
+                              if (totalCount === 0) return;
+                              const nextIndex = (currentIndex + 1) % totalCount;
+                              setResult(learnSentences[nextIndex]);
+                            }}
+                            disabled={totalCount <= 1}
+                            className="p-2 text-emerald-700 hover:text-emerald-900 bg-emerald-50 hover:bg-emerald-100 border border-emerald-100/40 rounded-xl disabled:opacity-40 disabled:pointer-events-none transition-all cursor-pointer"
+                            title="Câu kế tiếp"
+                          >
+                            <ChevronRight size={16} />
+                          </button>
                         </div>
-                      </div>
 
-                      {/* Middle Block: Prev / Next Navigation Buttons */}
-                      <div className="flex items-center gap-3 w-full md:w-auto justify-center">
                         <button
-                          onClick={() => {
-                            if (totalCount === 0) return;
-                            const prevIndex = (currentIndex - 1 + totalCount) % totalCount;
-                            setResult(learnSentences[prevIndex]);
-                          }}
-                          disabled={totalCount <= 1}
-                          className="flex items-center gap-2 text-xs font-black uppercase tracking-wider text-emerald-700 hover:text-white bg-emerald-50 hover:bg-emerald-600 disabled:opacity-40 disabled:pointer-events-none px-5 py-2.5 rounded-xl transition-all duration-200 border border-emerald-100/50 hover:border-emerald-600 shadow-sm flex-1 md:flex-initial text-center justify-center cursor-pointer"
+                          onClick={() => setIsLearnSettingsOpen(true)}
+                          className="p-2.5 text-emerald-700 hover:text-emerald-900 bg-emerald-50 hover:bg-emerald-100 border border-emerald-100/40 rounded-xl transition-all cursor-pointer"
+                          title="Thay đổi chủ đề / Mức độ"
                         >
-                          ← Câu trước
+                          <SlidersHorizontal size={16} />
                         </button>
-                        
-                        <button
-                          onClick={() => {
-                            if (totalCount === 0) return;
-                            const nextIndex = (currentIndex + 1) % totalCount;
-                            setResult(learnSentences[nextIndex]);
-                          }}
-                          disabled={totalCount <= 1}
-                          className="flex items-center gap-2 text-xs font-black uppercase tracking-wider text-emerald-700 hover:text-white bg-emerald-50 hover:bg-emerald-600 disabled:opacity-40 disabled:pointer-events-none px-5 py-2.5 rounded-xl transition-all duration-200 border border-emerald-100/50 hover:border-emerald-600 shadow-sm flex-1 md:flex-initial text-center justify-center cursor-pointer"
-                        >
-                          Câu kế tiếp →
-                        </button>
-                      </div>
-
-                      {/* Right Block: Active Topic Badge */}
-                      <span className="text-xs font-bold text-emerald-600 bg-emerald-50 px-3 py-2 rounded-xl uppercase tracking-wider w-full md:w-auto text-center border border-emerald-100/30">
-                        Chủ đề: {categories.find(c => c.id === (result as any).categoryId)?.name || 'Chung'}
-                      </span>
                       </div>
 
                       <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
@@ -2056,26 +2362,44 @@ export default function App() {
                   <div className="lg:col-span-6 space-y-6 lg:sticky lg:top-24">
                     <div className="sleek-card bg-white relative overflow-hidden transition-all shadow-md">
                       <div className="absolute top-0 right-0 w-32 h-32 bg-primary/5 rounded-full -mr-16 -mt-16"></div>
-                      <div className="flex justify-between items-start mb-6">
-                        <span className="text-[10px] font-black text-emerald-600 bg-emerald-50 px-3 py-1 rounded-full uppercase tracking-tighter">
+                      <div className="flex items-center justify-between gap-2 mb-4 border-b border-slate-50 pb-3">
+                        <span className="text-[10px] font-black text-emerald-600 bg-emerald-50 px-2.5 py-1 rounded-full uppercase tracking-tighter shrink-0">
                           Văn bản học tập
                         </span>
-                        <div className="flex gap-2">
+                        
+                        <div className="flex items-center gap-1 bg-slate-50 p-1 rounded-xl border border-slate-100 shrink-0">
+                          {/* Speak Buttons */}
                           <button 
                             onClick={() => handleSpeak(result.chinese, false)} 
                             title="Nghe tốc độ thường (1.0x)"
-                            className="p-2.5 bg-primary/5 text-primary rounded-xl hover:bg-primary/10 transition-colors flex items-center gap-1 cursor-pointer"
+                            className="p-1 bg-white text-primary rounded-lg hover:bg-primary/5 shadow-sm transition-colors flex items-center justify-center h-7 w-7 cursor-pointer"
                           >
-                            <Volume2 size={20}/>
-                            <span className="text-[10px] font-black uppercase">1x</span>
+                            <Volume2 size={14}/>
                           </button>
                           <button 
                             onClick={() => handleSpeak(result.chinese, true)} 
                             title="Nghe tốc độ chậm (0.5x)"
-                            className="p-2.5 bg-amber-50 text-amber-600 rounded-xl hover:bg-amber-100 transition-colors flex items-center gap-1 cursor-pointer border border-amber-200/50"
+                            className="p-1 bg-white text-amber-600 rounded-lg hover:bg-amber-50 shadow-sm transition-colors flex items-center justify-center h-7 w-7 cursor-pointer text-xs"
                           >
-                            <span>🐢</span>
-                            <span className="text-[10px] font-black text-amber-700">0.5x</span>
+                            🐢
+                          </button>
+
+                          <div className="w-[1px] h-3 bg-slate-200 mx-0.5"></div>
+
+                          {/* Memory Test Toggles */}
+                          <button 
+                            onClick={() => setHidePinyin(!hidePinyin)} 
+                            title={hidePinyin ? "Hiện Pinyin" : "Ẩn Pinyin"}
+                            className={`p-1 rounded-lg transition-colors flex items-center justify-center h-7 w-7 cursor-pointer ${hidePinyin ? 'bg-amber-100 text-amber-700' : 'bg-white text-slate-500 hover:bg-slate-100'}`}
+                          >
+                            {hidePinyin ? <EyeOff size={14}/> : <Eye size={14}/>}
+                          </button>
+                          <button 
+                            onClick={() => setHideMeaning(!hideMeaning)} 
+                            title={hideMeaning ? "Hiện Dịch nghĩa" : "Ẩn Dịch nghĩa"}
+                            className={`p-1 rounded-lg transition-colors flex items-center justify-center h-7 w-7 cursor-pointer ${hideMeaning ? 'bg-emerald-100 text-emerald-700' : 'bg-white text-slate-500 hover:bg-slate-100'}`}
+                          >
+                            {hideMeaning ? <EyeOff size={14}/> : <Eye size={14}/>}
                           </button>
                         </div>
                       </div>
@@ -2127,13 +2451,57 @@ export default function App() {
 
                       <div className="mb-6 md:mb-8">
                         <p className="text-4xl md:text-6xl font-bold text-slate-800 tracking-[0.12em] mb-3 md:mb-4 leading-normal break-words">{renderHighlightedChinese(result.chinese, (result as any).id)}</p>
-                        <p className="text-base md:text-xl text-slate-500 font-medium italic break-words">{result.pinyin}</p>
+                        
+                        <div className="flex items-center gap-2 group/pinyin min-h-[32px]">
+                          {hidePinyin ? (
+                            <span 
+                              onClick={() => setHidePinyin(false)}
+                              className="inline-flex items-center gap-1.5 px-3 py-1 bg-amber-50 text-amber-700 hover:bg-amber-100 rounded-lg text-xs font-bold cursor-pointer select-none transition-all duration-200 border border-amber-100/60 animate-pulse"
+                              title="Nhấp để hiển thị Pinyin"
+                            >
+                              <EyeOff size={12} /> Nhấp để hiện Pinyin (Kiểm tra đọc)
+                            </span>
+                          ) : (
+                            <>
+                              <p className="text-base md:text-xl text-slate-500 font-medium italic break-words">{result.pinyin}</p>
+                              <button 
+                                onClick={() => setHidePinyin(true)}
+                                className="text-slate-300 hover:text-slate-600 transition-colors p-1 opacity-0 group-hover/pinyin:opacity-100 focus:opacity-100 cursor-pointer"
+                                title="Ẩn Pinyin"
+                              >
+                                <EyeOff size={14} />
+                              </button>
+                            </>
+                          )}
+                        </div>
                       </div>
 
                       <div className="space-y-3 md:space-y-4 pt-6 md:pt-8 border-t border-slate-50">
-                        <p className="text-[10px] md:text-xs font-black text-slate-400 uppercase tracking-widest">Dịch nghĩa</p>
-                        <p className="text-base md:text-lg font-bold text-slate-700 leading-relaxed">{result.meaning}</p>
-                        {('originalText' in result) && (
+                        <div className="flex items-center justify-between">
+                          <p className="text-[10px] md:text-xs font-black text-slate-400 uppercase tracking-widest">Dịch nghĩa</p>
+                          {!hideMeaning && (
+                            <button 
+                              onClick={() => setHideMeaning(true)}
+                              className="text-xs text-slate-400 hover:text-slate-600 transition-colors flex items-center gap-1 px-2 py-1 rounded hover:bg-slate-50 cursor-pointer"
+                              title="Ẩn dịch nghĩa tiếng Việt"
+                            >
+                              <EyeOff size={12} /> Ẩn nghĩa
+                            </button>
+                          )}
+                        </div>
+
+                        {hideMeaning ? (
+                          <div 
+                            onClick={() => setHideMeaning(false)}
+                            className="p-4 bg-emerald-50/50 hover:bg-emerald-50 rounded-2xl border border-dashed border-emerald-100 text-emerald-800 text-center cursor-pointer select-none transition-all duration-200 font-bold text-xs flex items-center justify-center gap-2 animate-pulse"
+                            title="Nhấp để hiển thị nghĩa tiếng Việt"
+                          >
+                            <EyeOff size={14} className="text-emerald-500" /> Nhấp để xem dịch nghĩa tiếng Việt (Kiểm tra nhớ)
+                          </div>
+                        ) : (
+                          <p className="text-base md:text-lg font-bold text-slate-700 leading-relaxed">{result.meaning}</p>
+                        )}
+                        {!hideMeaning && ('originalText' in result) && (
                           <p className="text-xs md:text-sm text-slate-400 italic">Văn bản gốc: {(result as any).originalText}</p>
                         )}
                       </div>
@@ -2317,19 +2685,19 @@ export default function App() {
                 </div>
 
                 {/* Floating Bottom Pagination Panel */}
-                <div className="fixed bottom-20 lg:bottom-8 left-1/2 -translate-x-1/2 z-40 bg-white/95 backdrop-blur-md border border-slate-200/80 shadow-2xl px-4 py-2.5 rounded-full flex items-center gap-3 animate-in fade-in slide-in-from-bottom-5 duration-300">
+                <div className="fixed bottom-20 lg:bottom-8 left-1/2 -translate-x-1/2 z-40 bg-white/95 backdrop-blur-md border border-slate-200/80 shadow-2xl px-8 sm:px-12 py-3 rounded-full flex items-center gap-4 sm:gap-8 animate-in fade-in slide-in-from-bottom-5 duration-300">
                   <button 
                     onClick={() => {
                       setResult(null);
                       window.scrollTo({ top: 0, behavior: 'smooth' });
                     }}
                     title="Quay lại danh sách"
-                    className="p-2 text-slate-500 hover:text-slate-800 bg-slate-100 hover:bg-slate-200 rounded-full transition-all cursor-pointer flex items-center justify-center shrink-0"
+                    className="p-2 sm:p-3 text-slate-500 hover:text-slate-800 bg-slate-100 hover:bg-slate-200 rounded-full transition-all cursor-pointer flex items-center justify-center shrink-0"
                   >
-                    <List size={16} />
+                    <List size={14} className="sm:w-4 sm:h-4" />
                   </button>
                   
-                  <div className="w-px h-5 bg-slate-200 shrink-0" />
+                  <div className="w-px h-4 sm:h-5 bg-slate-200 shrink-0" />
                   
                   <button
                     onClick={() => {
@@ -2339,14 +2707,14 @@ export default function App() {
                       window.scrollTo({ top: 0, behavior: 'smooth' });
                     }}
                     disabled={totalCount <= 1}
-                    className="flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-black uppercase tracking-wider text-emerald-700 bg-emerald-50 hover:bg-emerald-600 hover:text-white disabled:opacity-40 disabled:pointer-events-none rounded-full transition-all duration-200 border border-emerald-100/50 cursor-pointer shrink-0"
+                    className="flex items-center gap-1.5 px-4.5 sm:px-6.5 py-2 text-[10px] sm:text-xs font-black uppercase tracking-wide text-emerald-700 bg-emerald-50 hover:bg-emerald-600 hover:text-white disabled:opacity-40 disabled:pointer-events-none rounded-full transition-all duration-200 border border-emerald-100/50 cursor-pointer shrink-0"
                   >
                     ← Trước
                   </button>
                   
-                  <div className="flex items-center gap-1 font-extrabold text-xs text-slate-400 bg-slate-50/50 px-2.5 py-1 rounded-full border border-slate-100 min-w-[50px] justify-center shrink-0">
+                  <div className="flex items-center gap-0.5 sm:gap-1 font-extrabold text-[10px] sm:text-xs text-slate-400 bg-slate-50/50 px-2.5 sm:px-3.5 py-1 rounded-full border border-slate-100 min-w-[45px] sm:min-w-[60px] justify-center shrink-0">
                     <span className="text-slate-800">{currentNo}</span>
-                    <span className="text-slate-250">/</span>
+                    <span className="text-slate-200">/</span>
                     <span>{totalCount}</span>
                   </div>
                   
@@ -2358,9 +2726,9 @@ export default function App() {
                       window.scrollTo({ top: 0, behavior: 'smooth' });
                     }}
                     disabled={totalCount <= 1}
-                    className="flex items-center gap-1.5 px-4 py-1.5 text-xs font-black uppercase tracking-wider text-white bg-emerald-600 hover:bg-emerald-700 disabled:opacity-40 disabled:pointer-events-none rounded-full transition-all duration-200 shadow-lg shadow-emerald-100 cursor-pointer shrink-0"
+                    className="flex items-center gap-1.5 px-5 sm:px-7.5 py-2 text-[10px] sm:text-xs font-black uppercase tracking-wide text-white bg-emerald-600 hover:bg-emerald-700 disabled:opacity-40 disabled:pointer-events-none rounded-full transition-all duration-200 shadow-md shadow-emerald-100/50 cursor-pointer shrink-0"
                   >
-                    Kế tiếp →
+                    Tiếp →
                   </button>
                 </div>
               </>
@@ -2564,7 +2932,7 @@ export default function App() {
                  <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="space-y-6">
                     <div className="sleek-card bg-white relative overflow-hidden">
                        <div className="absolute top-0 right-0 w-32 h-32 bg-primary/5 rounded-full -mr-16 -mt-16"></div>
-                       <div className="flex justify-between items-start mb-6">
+                       <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-3 mb-4 border-b border-slate-50 pb-3">
                           <div className="flex gap-2">
                              {isSaving && <div className="text-xs font-bold text-primary flex items-center gap-2"><Loader2 size={12} className="animate-spin"/> Đang lưu...</div>}
                              {!('id' in result) ? (
@@ -2604,22 +2972,39 @@ export default function App() {
                                </div>
                              )}
                           </div>
-                          <div className="flex gap-2">
+                          <div className="flex items-center gap-1 bg-slate-50 p-1 rounded-xl border border-slate-100 shrink-0">
+                            {/* Speak Buttons */}
                             <button 
                               onClick={() => handleSpeak(result.chinese, false)} 
                               title="Nghe tốc độ thường (1.0x)"
-                              className="p-2.5 bg-primary/5 text-primary rounded-xl hover:bg-primary/10 transition-colors flex items-center gap-1 cursor-pointer"
+                              className="p-1 bg-white text-primary rounded-lg hover:bg-primary/5 shadow-sm transition-colors flex items-center justify-center h-7 w-7 cursor-pointer"
                             >
-                              <Volume2 size={20}/>
-                              <span className="text-[10px] font-black uppercase">1x</span>
+                              <Volume2 size={14}/>
                             </button>
                             <button 
                               onClick={() => handleSpeak(result.chinese, true)} 
                               title="Nghe tốc độ chậm (0.5x)"
-                              className="p-2.5 bg-amber-50 text-amber-600 rounded-xl hover:bg-amber-100 transition-colors flex items-center gap-1 cursor-pointer border border-amber-200/50"
+                              className="p-1 bg-white text-amber-600 rounded-lg hover:bg-amber-50 shadow-sm transition-colors flex items-center justify-center h-7 w-7 cursor-pointer text-xs"
                             >
-                              <span>🐢</span>
-                              <span className="text-[10px] font-black text-amber-700">0.5x</span>
+                              🐢
+                            </button>
+
+                            <div className="w-[1px] h-3 bg-slate-200 mx-0.5"></div>
+
+                            {/* Memory Test Toggles */}
+                            <button 
+                              onClick={() => setHidePinyin(!hidePinyin)} 
+                              title={hidePinyin ? "Hiện Pinyin" : "Ẩn Pinyin"}
+                              className={`p-1 rounded-lg transition-colors flex items-center justify-center h-7 w-7 cursor-pointer ${hidePinyin ? 'bg-amber-100 text-amber-700' : 'bg-white text-slate-500 hover:bg-slate-100'}`}
+                            >
+                              {hidePinyin ? <EyeOff size={14}/> : <Eye size={14}/>}
+                            </button>
+                            <button 
+                              onClick={() => setHideMeaning(!hideMeaning)} 
+                              title={hideMeaning ? "Hiện Dịch nghĩa" : "Ẩn Dịch nghĩa"}
+                              className={`p-1 rounded-lg transition-colors flex items-center justify-center h-7 w-7 cursor-pointer ${hideMeaning ? 'bg-emerald-100 text-emerald-700' : 'bg-white text-slate-500 hover:bg-slate-100'}`}
+                            >
+                              {hideMeaning ? <EyeOff size={14}/> : <Eye size={14}/>}
                             </button>
                           </div>
                        </div>
@@ -2671,7 +3056,29 @@ export default function App() {
 
                         <div className="mb-6 md:mb-8 relative" onMouseUp={handleSelection}>
                           <p className="text-4xl md:text-6xl font-bold text-slate-800 tracking-[0.12em] mb-3 md:mb-4 leading-normal break-words">{renderHighlightedChinese(result.chinese, (result as any).id)}</p>
-                          <p className="text-base md:text-xl text-slate-500 font-medium italic break-words">{result.pinyin}</p>
+                          
+                          <div className="flex items-center gap-2 group/pinyin min-h-[32px]">
+                            {hidePinyin ? (
+                              <span 
+                                onClick={() => setHidePinyin(false)}
+                                className="inline-flex items-center gap-1.5 px-3 py-1 bg-amber-50 text-amber-700 hover:bg-amber-100 rounded-lg text-xs font-bold cursor-pointer select-none transition-all duration-200 border border-amber-100/60 animate-pulse"
+                                title="Nhấp để hiển thị Pinyin"
+                              >
+                                <EyeOff size={12} /> Nhấp để hiện Pinyin (Kiểm tra đọc)
+                              </span>
+                            ) : (
+                              <>
+                                <p className="text-base md:text-xl text-slate-500 font-medium italic break-words">{result.pinyin}</p>
+                                <button 
+                                  onClick={() => setHidePinyin(true)}
+                                  className="text-slate-300 hover:text-slate-600 transition-colors p-1 opacity-0 group-hover/pinyin:opacity-100 focus:opacity-100 cursor-pointer"
+                                  title="Ẩn Pinyin"
+                                >
+                                  <EyeOff size={14} />
+                                </button>
+                              </>
+                            )}
+                          </div>
                           
                           {/* Floating Selection Menu */}
                           {selectionRange && (
@@ -2701,9 +3108,31 @@ export default function App() {
                        </div>
 
                        <div className="space-y-3 md:space-y-4 pt-6 md:pt-8 border-t border-slate-50">
-                          <p className="text-[10px] md:text-xs font-black text-slate-400 uppercase tracking-widest">Nghĩa bài học</p>
-                          <p className="text-base md:text-lg font-bold text-slate-700 leading-relaxed">{result.meaning}</p>
-                          {('originalText' in result) && (
+                          <div className="flex items-center justify-between">
+                            <p className="text-[10px] md:text-xs font-black text-slate-400 uppercase tracking-widest">Nghĩa bài học</p>
+                            {!hideMeaning && (
+                              <button 
+                                onClick={() => setHideMeaning(true)}
+                                className="text-xs text-slate-400 hover:text-slate-600 transition-colors flex items-center gap-1 px-2 py-1 rounded hover:bg-slate-50 cursor-pointer"
+                                title="Ẩn dịch nghĩa tiếng Việt"
+                              >
+                                <EyeOff size={12} /> Ẩn nghĩa
+                              </button>
+                            )}
+                          </div>
+
+                          {hideMeaning ? (
+                            <div 
+                              onClick={() => setHideMeaning(false)}
+                              className="p-4 bg-emerald-50/50 hover:bg-emerald-50 rounded-2xl border border-dashed border-emerald-100 text-emerald-800 text-center cursor-pointer select-none transition-all duration-200 font-bold text-xs flex items-center justify-center gap-2 animate-pulse mt-2"
+                              title="Nhấp để hiển thị nghĩa tiếng Việt"
+                            >
+                              <EyeOff size={14} className="text-emerald-500" /> Nhấp để xem dịch nghĩa tiếng Việt (Kiểm tra nhớ)
+                            </div>
+                          ) : (
+                            <p className="text-base md:text-lg font-bold text-slate-700 leading-relaxed">{result.meaning}</p>
+                          )}
+                          {!hideMeaning && ('originalText' in result) && (
                             <p className="text-xs md:text-sm text-slate-400 italic">Văn bản gốc: {(result as any).originalText}</p>
                           )}
                        </div>
