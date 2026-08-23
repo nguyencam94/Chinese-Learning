@@ -39,7 +39,7 @@ export const translateAndExplain = async (text: string): Promise<TranslationResu
   const response = await ai.models.generateContent({
     model: "gemini-3-flash-preview",
     contents: `Translate the following Vietnamese sentence into Chinese (Simplified). 
-    Provide the Chinese characters, Pinyin, a detailed explanation in Vietnamese, and a beautiful vector inline SVG illustration of the sentence.
+    Provide the Chinese characters, Pinyin, a detailed explanation in Vietnamese, and an exquisitely detailed, rich, multi-gradient SVG illustration depicting the realistic scene or meaning of the sentence.
     
     Additionally, provide 3 variations of the same sentence (e.g., negative, question, or adding emphasis) with their pinyin and meaning.
     
@@ -62,7 +62,7 @@ export const translateAndExplain = async (text: string): Promise<TranslationResu
           grammarExplanation: { type: Type.STRING, description: "A detailed grammar and vocabulary breakdown in Vietnamese (Markdown format, one point per line)" },
           illustrationSvg: { 
             type: Type.STRING, 
-            description: "A beautiful, self-contained responsive raw SVG illustration representing the sentence. It must start with <svg> and end with </svg>, viewBox '0 0 200 200', use flat minimalist 2D shapes with modern elegant pastel colors. No markdown wrapper like ```xml." 
+            description: "A rich, highly detailed, responsive raw SVG illustration representing the realistic scene of the sentence. It must start with <svg> and end with </svg>, viewBox '0 0 300 300', with <defs> gradients, depth, realistic lighting, and layered elements. No markdown wrapper." 
           },
           variations: {
             type: Type.ARRAY,
@@ -102,26 +102,144 @@ export const translateAndExplain = async (text: string): Promise<TranslationResu
   return parsed;
 };
 
-export const generateIllustrationSvg = async (chinese: string, meaning: string): Promise<string> => {
+export type IllustrationStyle = 'photorealistic' | '3d-cinematic' | 'chinese-art' | 'detailed-vector';
+
+export const compressDataUrl = async (dataUrl: string, maxDimension = 512, quality = 0.85): Promise<string> => {
+  if (typeof window === 'undefined' || !dataUrl.startsWith('data:image/')) {
+    return dataUrl;
+  }
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = () => {
+      let { width, height } = img;
+      if (width > maxDimension || height > maxDimension) {
+        if (width > height) {
+          height = Math.round((height * maxDimension) / width);
+          width = maxDimension;
+        } else {
+          width = Math.round((width * maxDimension) / height);
+          height = maxDimension;
+        }
+      }
+      const canvas = document.createElement('canvas');
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) {
+        resolve(dataUrl);
+        return;
+      }
+      ctx.drawImage(img, 0, 0, width, height);
+      try {
+        const compressed = canvas.toDataURL('image/webp', quality);
+        if (compressed && compressed.startsWith('data:image/webp') && compressed.length < dataUrl.length) {
+          resolve(compressed);
+          return;
+        }
+      } catch {}
+      const jpeg = canvas.toDataURL('image/jpeg', quality);
+      resolve(jpeg.length < dataUrl.length ? jpeg : dataUrl);
+    };
+    img.onerror = () => resolve(dataUrl);
+    img.src = dataUrl;
+  });
+};
+
+export const generateRealisticIllustration = async (
+  chinese: string,
+  meaning: string,
+  style: IllustrationStyle = 'photorealistic'
+): Promise<string> => {
   const ai = getGenAI();
   if (!ai) {
     throw new Error("Chưa cấu hình API Key cho AI.");
   }
-  const response = await ai.models.generateContent({
+
+  let styleDesc = "";
+  if (style === 'photorealistic') {
+    styleDesc = "A hyper-realistic, vivid, ultra-detailed 8k photograph portraying the real-life setting or action of the sentence. Cinematic soft lighting, shallow depth of field, authentic environment, highly realistic textures, vivid true-to-life colors, award-winning photography.";
+  } else if (style === '3d-cinematic') {
+    styleDesc = "Breathtaking 3D digital art masterpiece, Pixar and Unreal Engine 5 aesthetic, volumetric lighting, rich material shaders, realistic 3D depth, ray-traced shadows, highly detailed and vibrant.";
+  } else if (style === 'chinese-art') {
+    styleDesc = "Traditional high-end Chinese watercolor and ink wash painting (Guohua), delicate artistic brush strokes, misty mountains, poetic atmosphere, elegant classical Asian cultural aesthetics.";
+  } else {
+    styleDesc = "Highly detailed editorial vector illustration with rich multi-stop gradients, ambient lighting, volumetric depth, and intricate background elements.";
+  }
+
+  // 1. Try direct AI Image Generation (gemini-3.1-flash-image)
+  try {
+    const response = await ai.models.generateContent({
+      model: "gemini-3.1-flash-image",
+      contents: {
+        parts: [
+          {
+            text: `Generate a stunning, highly realistic and visually rich illustration for the Chinese sentence: "${chinese}" (Meaning: "${meaning}"). ${styleDesc} Square composition, rich detail, high clarity.`,
+          },
+        ],
+      },
+      config: {
+        imageConfig: {
+          aspectRatio: "1:1",
+          imageSize: "1K",
+        },
+      },
+    });
+
+    if (response?.candidates?.[0]?.content?.parts) {
+      for (const part of response.candidates[0].content.parts) {
+        if (part.inlineData && part.inlineData.data) {
+          const mime = part.inlineData.mimeType || "image/png";
+          const rawDataUrl = `data:${mime};base64,${part.inlineData.data}`;
+          return await compressDataUrl(rawDataUrl, 512, 0.85);
+        }
+      }
+    }
+  } catch (imgError) {
+    console.warn("Direct image model generation returned fallback:", imgError);
+
+    // 2. Try gemini-3.1-flash-lite-image
+    try {
+      const responseLite = await ai.models.generateContent({
+        model: "gemini-3.1-flash-lite-image",
+        contents: {
+          parts: [
+            {
+              text: `Generate a realistic visual scene representing "${chinese}" (${meaning}). ${styleDesc}`,
+            },
+          ],
+        },
+      });
+      if (responseLite?.candidates?.[0]?.content?.parts) {
+        for (const part of responseLite.candidates[0].content.parts) {
+          if (part.inlineData && part.inlineData.data) {
+            const mime = part.inlineData.mimeType || "image/png";
+            const rawDataUrl = `data:${mime};base64,${part.inlineData.data}`;
+            return await compressDataUrl(rawDataUrl, 512, 0.85);
+          }
+        }
+      }
+    } catch (liteError) {
+      console.warn("Lite image generation fallback:", liteError);
+    }
+  }
+
+  // 3. Fallback: Ultra-detailed, realistic multi-gradient SVG with atmospheric depth
+  const svgPrompt = `Create a rich, multi-layered, visually detailed inline SVG illustration for the Chinese sentence: "${chinese}" (Meaning: "${meaning}").
+  
+  REALISM & DETAIL REQUIREMENTS:
+  - Do NOT draw flat or childish stick figures or simple single-color shapes.
+  - Create rich visual depth using <defs> with multiple <linearGradient> and <radialGradient> definitions to model realistic lighting, soft highlights, cast shadows, and depth of field.
+  - Include realistic context details (such as detailed scenery, architectural elements, textures, sunlight/moonlight glares, natural foliage, or realistic props).
+  - The SVG MUST have viewBox="0 0 300 300" and width="100%" height="100%".
+  - Return ONLY raw SVG markup starting with "<svg" and ending with "</svg>". No markdown wrappers.`;
+
+  const svgResponse = await ai.models.generateContent({
     model: "gemini-3-flash-preview",
-    contents: `Write an inline SVG illustration for the Chinese sentence: "${chinese}" (Meaning: "${meaning}").
-    
-    GUIDELINES:
-    - Draw a complete, beautiful self-contained SVG illustration representing the main literal or symbolic subject of the sentence (e.g. coffee cup for tea/coffee, sun/umbrella for weather, cute minimalist cartoon scenes, travel icons, books, etc.).
-    - Keep it modern, clean, flat minimalist flat 2D style. Use soft pastel colors with gorgeous curves and nice shadows or gradient fills.
-    - The SVG MUST have dimensions of a square viewBox (viewBox="0 0 200 200").
-    - The SVG MUST be responsive (width="100%" height="100%").
-    - Do NOT include any markdown code blocks, XML declarations, or html comments.
-    - Start immediately with "<svg" and end with "</svg>".
-    - Avoid complex shapes to keep the token size reasonable. Max size around 2000-3000 characters.`,
+    contents: svgPrompt,
   });
 
-  let svg = response.text || "";
+  let svg = svgResponse.text || "";
   svg = svg.trim();
   if (svg.startsWith("```xml")) {
     svg = svg.replace(/^```xml/, "").replace(/```$/, "");
@@ -131,6 +249,10 @@ export const generateIllustrationSvg = async (chinese: string, meaning: string):
     svg = svg.replace(/^```/, "").replace(/```$/, "");
   }
   return svg.trim();
+};
+
+export const generateIllustrationSvg = async (chinese: string, meaning: string): Promise<string> => {
+  return generateRealisticIllustration(chinese, meaning, 'photorealistic');
 };
 
 export const censorTargetWordTranslation = async (

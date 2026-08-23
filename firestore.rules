@@ -45,7 +45,7 @@ service cloud.firestore {
         && (data.get('sectionId', '') == '' || (data.sectionId is string && isValidId(data.sectionId)))
         && (data.get('note', '') == '' || (data.note is string && data.note.size() <= 2000))
         && (data.get('difficulty', 'basic') is string && data.get('difficulty', 'basic') in ['basic', 'easy', 'medium', 'hard'])
-        && (data.get('illustrationSvg', '') == '' || (data.illustrationSvg is string && data.illustrationSvg.size() <= 60000))
+        && (data.get('illustrationSvg', '') == '' || (data.illustrationSvg is string && data.illustrationSvg.size() <= 800000))
         && (data.get('variations', []) is list);
     }
 

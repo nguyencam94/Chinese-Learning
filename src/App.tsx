@@ -29,10 +29,19 @@ import {
   SlidersHorizontal,
   Eye,
   EyeOff,
-  Menu
+  Menu,
+  Maximize2,
+  Palette
 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
-import { translateAndExplain, TranslationResult, generateIllustrationSvg, censorTargetWordTranslation } from './services/geminiService';
+import { 
+  translateAndExplain, 
+  TranslationResult, 
+  generateIllustrationSvg, 
+  generateRealisticIllustration, 
+  IllustrationStyle, 
+  censorTargetWordTranslation 
+} from './services/geminiService';
 import SingleCharacterLearn from './components/SingleCharacterLearn';
 import { 
   auth, 
@@ -282,6 +291,9 @@ export default function App() {
   const [isEditingNote, setIsEditingNote] = useState(false);
   const [isLearnSettingsOpen, setIsLearnSettingsOpen] = useState(false);
   const [isGeneratingIllustration, setIsGeneratingIllustration] = useState(false);
+  const [chosenIllustrationStyle, setChosenIllustrationStyle] = useState<IllustrationStyle>('photorealistic');
+  const [showIllustrationStyleDropdown, setShowIllustrationStyleDropdown] = useState(false);
+  const [selectedIllustrationModal, setSelectedIllustrationModal] = useState<TranslationResult | null>(null);
   const [hidePinyin, setHidePinyin] = useState(true);
   const [hideMeaning, setHideMeaning] = useState(true);
   
@@ -1903,11 +1915,32 @@ export default function App() {
                          </div>
                       </div>
                       <div className="flex-1">
-                        <h3 className={`text-xl md:text-2xl font-bold text-slate-800 mb-2 transition-colors duration-200 leading-tight tracking-[0.08em] ${theme.activeText}`}>
-                          {renderHighlightedChinese(sentence.chinese, sentence.id)}
-                        </h3>
-                        <p className="text-sm md:text-base text-slate-400 italic mb-3 font-medium">{sentence.pinyin}</p>
-                        <p className="text-sm md:text-base text-slate-600 font-medium line-clamp-3 leading-relaxed">{sentence.meaning}</p>
+                        <div className="flex items-start justify-between gap-3 mb-2">
+                          <div className="flex-1">
+                            <h3 className={`text-xl md:text-2xl font-bold text-slate-800 mb-1 transition-colors duration-200 leading-tight tracking-[0.08em] ${theme.activeText}`}>
+                              {renderHighlightedChinese(sentence.chinese, sentence.id)}
+                            </h3>
+                            <p className="text-sm md:text-base text-slate-400 italic font-medium">{sentence.pinyin}</p>
+                          </div>
+                          {sentence.illustrationSvg && (
+                            <div className="w-14 h-14 sm:w-16 sm:h-16 rounded-xl overflow-hidden bg-slate-50 border border-slate-200/70 shrink-0 shadow-xs flex items-center justify-center">
+                              {sentence.illustrationSvg.startsWith('data:image/') || sentence.illustrationSvg.startsWith('http') ? (
+                                <img 
+                                  src={sentence.illustrationSvg} 
+                                  alt={sentence.chinese} 
+                                  referrerPolicy="no-referrer"
+                                  className="w-full h-full object-cover" 
+                                />
+                              ) : (
+                                <div 
+                                  className="w-full h-full p-1 flex items-center justify-center [&>svg]:w-full [&>svg]:h-full [&>svg]:object-contain" 
+                                  dangerouslySetInnerHTML={{ __html: sentence.illustrationSvg }} 
+                                />
+                              )}
+                            </div>
+                          )}
+                        </div>
+                        <p className="text-sm md:text-base text-slate-600 font-medium line-clamp-3 leading-relaxed mt-2">{sentence.meaning}</p>
                         {sentence.note && (
                           <div className="mt-4 p-3 bg-amber-50/40 rounded-2xl border border-amber-100/60 flex gap-2 items-start text-left">
                             <Bookmark size={14} className="text-amber-500 shrink-0 mt-0.5" />
@@ -2240,47 +2273,187 @@ export default function App() {
                         </div>
                       </div>
                       
-                      {/* Dynamic Vector Illustration Card (Compacted) */}
+                      {/* Dynamic Realism Illustration Card */}
                       {result.illustrationSvg ? (
-                        <div className="w-full flex justify-center mb-3">
-                          <div 
-                            className="w-24 h-24 sm:w-28 sm:h-28 rounded-2xl overflow-hidden p-1.5 bg-slate-50 border border-slate-100/80 flex items-center justify-center shadow-inner relative group select-none transition-transform hover:scale-105 duration-200 shrink-0" 
-                            dangerouslySetInnerHTML={{ __html: result.illustrationSvg }} 
-                          />
-                        </div>
-                      ) : (
-                        user && 'id' in result && (
-                          <div className="mb-3 p-2.5 rounded-xl border border-dashed border-slate-200 bg-slate-50/70 flex items-center justify-between gap-2">
-                            {isGeneratingIllustration ? (
-                              <div className="flex items-center gap-2 py-1 mx-auto">
-                                <Loader2 className="text-emerald-500 animate-spin" size={16} />
-                                <p className="text-[11px] text-slate-500 font-bold animate-pulse">Đang phác họa tranh vector AI...</p>
+                        <div className="w-full flex flex-col items-center justify-center mb-4">
+                          <div className="relative group">
+                            <div 
+                              onClick={() => setSelectedIllustrationModal(result)}
+                              className="w-28 h-28 sm:w-36 sm:h-36 md:w-44 md:h-44 rounded-2xl overflow-hidden bg-slate-50 border border-slate-200/80 shadow-md flex items-center justify-center relative cursor-zoom-in transition-all duration-300 hover:shadow-xl hover:scale-[1.02]"
+                              title="Nhấp để phóng to tranh minh họa"
+                            >
+                              {result.illustrationSvg.startsWith('data:image/') || result.illustrationSvg.startsWith('http') ? (
+                                <img 
+                                  src={result.illustrationSvg} 
+                                  alt={result.chinese} 
+                                  referrerPolicy="no-referrer" 
+                                  className="w-full h-full object-cover"
+                                />
+                              ) : (
+                                <div 
+                                  className="w-full h-full flex items-center justify-center p-2 [&>svg]:w-full [&>svg]:h-full [&>svg]:object-contain"
+                                  dangerouslySetInnerHTML={{ __html: result.illustrationSvg }}
+                                />
+                              )}
+                              
+                              {/* Overlay zoom badge */}
+                              <div className="absolute bottom-1.5 right-1.5 bg-black/60 backdrop-blur-sm text-white px-2 py-0.5 rounded-lg text-[9px] font-bold flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                <Maximize2 size={10} /> Phóng to
                               </div>
-                            ) : (
-                              <>
-                                <div className="flex items-center gap-1.5 text-left">
-                                  <Sparkles className="text-emerald-500 shrink-0" size={15} />
-                                  <p className="text-[10px] text-slate-500 font-medium line-clamp-1">Trực quan hóa bằng tranh vector AI</p>
-                                </div>
+                            </div>
+                            
+                            {/* Regeneration action & style picker */}
+                            {user && 'id' in result && (
+                              <div className="flex items-center justify-center gap-1.5 mt-2">
+                                <button
+                                  onClick={() => setShowIllustrationStyleDropdown(!showIllustrationStyleDropdown)}
+                                  disabled={isGeneratingIllustration}
+                                  className="px-2.5 py-1 bg-white hover:bg-slate-50 text-slate-700 font-bold text-[10px] rounded-lg border border-slate-200 transition-all shadow-xs flex items-center gap-1 cursor-pointer disabled:opacity-50"
+                                  title="Đổi phong cách vẽ chân thực"
+                                >
+                                  <Palette size={12} className="text-indigo-500" />
+                                  <span>{
+                                    chosenIllustrationStyle === 'photorealistic' ? '📸 Chân thực' :
+                                    chosenIllustrationStyle === '3d-cinematic' ? '🎨 3D Sống động' :
+                                    chosenIllustrationStyle === 'chinese-art' ? '🖌️ Thủy mặc' : '✨ Vector chi tiết'
+                                  }</span>
+                                  <ChevronDown size={10} />
+                                </button>
+                                
                                 <button
                                   onClick={async () => {
                                     setIsGeneratingIllustration(true);
                                     try {
-                                      const svg = await generateIllustrationSvg(result.chinese, result.meaning);
-                                      await updateDoc(doc(db, 'saved_sentences', (result as SavedSentence).id), {
-                                        illustrationSvg: svg
-                                      });
-                                      setResult(prev => prev ? { ...prev, illustrationSvg: svg } as SavedSentence : null);
+                                      const newArtwork = await generateRealisticIllustration(result.chinese, result.meaning, chosenIllustrationStyle);
+                                      setResult(prev => prev ? { ...prev, illustrationSvg: newArtwork } as SavedSentence : null);
+                                      if (user && 'id' in result && (result as SavedSentence).id) {
+                                        try {
+                                          await updateDoc(doc(db, 'saved_sentences', (result as SavedSentence).id), {
+                                            illustrationSvg: newArtwork
+                                          });
+                                        } catch (dbErr) {
+                                          console.error("Firestore sync error:", dbErr);
+                                        }
+                                      }
                                     } catch (err) {
                                       console.error("Lỗi vẽ tranh:", err);
                                     } finally {
                                       setIsGeneratingIllustration(false);
                                     }
                                   }}
-                                  className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white font-bold text-[10px] rounded-lg transition-all shadow-sm flex items-center gap-1 shrink-0 cursor-pointer border-none"
+                                  disabled={isGeneratingIllustration}
+                                  className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white font-bold text-[10px] rounded-lg transition-all shadow-sm flex items-center gap-1 cursor-pointer disabled:opacity-50"
                                 >
-                                  🎨 Vẽ AI
+                                  {isGeneratingIllustration ? (
+                                    <>
+                                      <Loader2 className="animate-spin" size={12} />
+                                      <span>Đang vẽ...</span>
+                                    </>
+                                  ) : (
+                                    <>
+                                      <Sparkles size={12} />
+                                      <span>Vẽ lại chân thực</span>
+                                    </>
+                                  )}
                                 </button>
+                              </div>
+                            )}
+
+                            {/* Style selector dropdown */}
+                            <AnimatePresence>
+                              {showIllustrationStyleDropdown && (
+                                <motion.div
+                                  initial={{ opacity: 0, y: -5 }}
+                                  animate={{ opacity: 1, y: 0 }}
+                                  exit={{ opacity: 0, y: -5 }}
+                                  className="absolute left-1/2 -translate-x-1/2 mt-1 z-30 w-56 bg-white rounded-xl shadow-xl border border-slate-200 p-1.5 space-y-1"
+                                >
+                                  <p className="text-[9px] font-black text-slate-400 uppercase tracking-wider px-2 py-1">Chọn phong cách tranh AI:</p>
+                                  {[
+                                    { id: 'photorealistic' as const, label: '📸 Chân thực (Nhiếp ảnh)', desc: 'Ảnh chụp đời thực, ánh sáng sống động' },
+                                    { id: '3d-cinematic' as const, label: '🎨 3D Điện ảnh (Cinematic)', desc: 'Khối 3D sắc nét, phong cách điện ảnh' },
+                                    { id: 'chinese-art' as const, label: '🖌️ Thủy mặc Trung Hoa', desc: 'Nghệ thuật tranh thủy mặc cổ phong' },
+                                    { id: 'detailed-vector' as const, label: '✨ Vector Chi tiết Đa lớp', desc: 'Đồ họa vector ánh sáng gradient chi tiết' },
+                                  ].map(item => (
+                                    <button
+                                      key={item.id}
+                                      onClick={() => {
+                                        setChosenIllustrationStyle(item.id);
+                                        setShowIllustrationStyleDropdown(false);
+                                      }}
+                                      className={`w-full text-left px-2.5 py-1.5 rounded-lg text-xs font-bold flex flex-col transition-all cursor-pointer ${
+                                        chosenIllustrationStyle === item.id 
+                                          ? 'bg-emerald-50 text-emerald-800 border border-emerald-200' 
+                                          : 'text-slate-700 hover:bg-slate-50'
+                                      }`}
+                                    >
+                                      <span>{item.label}</span>
+                                      <span className="text-[9px] font-medium text-slate-400">{item.desc}</span>
+                                    </button>
+                                  ))}
+                                </motion.div>
+                              )}
+                            </AnimatePresence>
+                          </div>
+                        </div>
+                      ) : (
+                        user && 'id' in result && (
+                          <div className="mb-4 p-3 rounded-2xl border border-dashed border-emerald-200 bg-emerald-50/30 flex flex-col sm:flex-row items-center justify-between gap-3">
+                            {isGeneratingIllustration ? (
+                              <div className="flex items-center gap-2 py-1 mx-auto">
+                                <Loader2 className="text-emerald-500 animate-spin" size={18} />
+                                <p className="text-xs text-emerald-800 font-bold animate-pulse">Đang tạo tranh AI chân thực & sống động...</p>
+                              </div>
+                            ) : (
+                              <>
+                                <div className="flex items-center gap-2 text-left">
+                                  <div className="w-8 h-8 rounded-xl bg-emerald-100/60 flex items-center justify-center text-emerald-600 shrink-0">
+                                    <Sparkles size={16} />
+                                  </div>
+                                  <div>
+                                    <p className="text-xs font-bold text-slate-800">Tạo tranh minh họa chân thực AI</p>
+                                    <p className="text-[10px] text-slate-500 font-medium">Khắc họa bối cảnh câu văn chân thực sắc nét</p>
+                                  </div>
+                                </div>
+                                
+                                <div className="flex items-center gap-1.5 shrink-0">
+                                  <select
+                                    value={chosenIllustrationStyle}
+                                    onChange={(e) => setChosenIllustrationStyle(e.target.value as IllustrationStyle)}
+                                    className="text-[10px] font-bold py-1 px-2 rounded-lg bg-white border border-slate-200 text-slate-700 cursor-pointer"
+                                  >
+                                    <option value="photorealistic">📸 Chân thực</option>
+                                    <option value="3d-cinematic">🎨 3D Sống động</option>
+                                    <option value="chinese-art">🖌️ Thủy mặc</option>
+                                    <option value="detailed-vector">✨ Vector chi tiết</option>
+                                  </select>
+                                  
+                                  <button
+                                    onClick={async () => {
+                                      setIsGeneratingIllustration(true);
+                                      try {
+                                        const newArtwork = await generateRealisticIllustration(result.chinese, result.meaning, chosenIllustrationStyle);
+                                        setResult(prev => prev ? { ...prev, illustrationSvg: newArtwork } as SavedSentence : null);
+                                        if (user && 'id' in result && (result as SavedSentence).id) {
+                                          try {
+                                            await updateDoc(doc(db, 'saved_sentences', (result as SavedSentence).id), {
+                                              illustrationSvg: newArtwork
+                                            });
+                                          } catch (dbErr) {
+                                            console.error("Firestore sync error:", dbErr);
+                                          }
+                                        }
+                                      } catch (err) {
+                                        console.error("Lỗi vẽ tranh:", err);
+                                      } finally {
+                                        setIsGeneratingIllustration(false);
+                                      }
+                                    }}
+                                    className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white font-bold text-xs rounded-xl transition-all shadow-sm flex items-center gap-1 shrink-0 cursor-pointer border-none"
+                                  >
+                                    🎨 Tạo tranh ngay
+                                  </button>
+                                </div>
                               </>
                             )}
                           </div>
@@ -4845,6 +5018,79 @@ export default function App() {
               </div>
             </motion.div>
           </>
+        )}
+      </AnimatePresence>
+
+      {/* Fullscreen Realistic Artwork Lightbox Modal */}
+      <AnimatePresence>
+        {selectedIllustrationModal && selectedIllustrationModal.illustrationSvg && (
+          <div 
+            className="fixed inset-0 z-[150] flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md"
+            onClick={() => setSelectedIllustrationModal(null)}
+          >
+            <motion.div
+              initial={{ opacity: 0, scale: 0.9, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.9, y: 20 }}
+              className="bg-white rounded-3xl overflow-hidden shadow-2xl max-w-lg w-full border border-slate-100 flex flex-col"
+              onClick={(e) => e.stopPropagation()}
+            >
+              {/* Modal Header */}
+              <div className="p-4 sm:p-5 border-b border-slate-100 flex items-center justify-between bg-slate-50/80">
+                <div className="flex items-center gap-2">
+                  <Sparkles className="text-emerald-600" size={18} />
+                  <h3 className="font-bold text-slate-800 text-sm sm:text-base">Tranh minh họa AI chân thực & sắc nét</h3>
+                </div>
+                <button
+                  onClick={() => setSelectedIllustrationModal(null)}
+                  className="p-1.5 rounded-full hover:bg-slate-200 text-slate-400 hover:text-slate-700 transition-colors cursor-pointer"
+                >
+                  <X size={18} />
+                </button>
+              </div>
+
+              {/* Large Artwork Canvas */}
+              <div className="w-full aspect-square bg-slate-900 flex items-center justify-center overflow-hidden relative">
+                {selectedIllustrationModal.illustrationSvg.startsWith('data:image/') || selectedIllustrationModal.illustrationSvg.startsWith('http') ? (
+                  <img
+                    src={selectedIllustrationModal.illustrationSvg}
+                    alt={selectedIllustrationModal.chinese}
+                    referrerPolicy="no-referrer"
+                    className="w-full h-full object-contain"
+                  />
+                ) : (
+                  <div
+                    className="w-full h-full p-6 flex items-center justify-center [&>svg]:w-full [&>svg]:h-full [&>svg]:object-contain"
+                    dangerouslySetInnerHTML={{ __html: selectedIllustrationModal.illustrationSvg }}
+                  />
+                )}
+              </div>
+
+              {/* Context Information */}
+              <div className="p-5 space-y-3 bg-white">
+                <div className="text-center">
+                  <h4 className="text-2xl sm:text-3xl font-black text-slate-900 tracking-wider mb-1">
+                    {selectedIllustrationModal.chinese}
+                  </h4>
+                  <p className="text-xs sm:text-sm font-semibold text-slate-400 italic mb-2">
+                    {selectedIllustrationModal.pinyin}
+                  </p>
+                  <p className="text-sm font-bold text-emerald-800 bg-emerald-50 py-2 px-4 rounded-xl border border-emerald-100/60 inline-block max-w-full">
+                    “{selectedIllustrationModal.meaning}”
+                  </p>
+                </div>
+
+                <div className="pt-2 flex justify-end gap-2">
+                  <button
+                    onClick={() => setSelectedIllustrationModal(null)}
+                    className="px-5 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-xl transition-all cursor-pointer"
+                  >
+                    Đóng
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </div>
         )}
       </AnimatePresence>
 
