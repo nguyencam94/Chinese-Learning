@@ -28,10 +28,12 @@ import {
   X,
   SlidersHorizontal,
   Eye,
-  EyeOff
+  EyeOff,
+  Menu
 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
-import { translateAndExplain, TranslationResult, generateIllustrationSvg } from './services/geminiService';
+import { translateAndExplain, TranslationResult, generateIllustrationSvg, censorTargetWordTranslation } from './services/geminiService';
+import SingleCharacterLearn from './components/SingleCharacterLearn';
 import { 
   auth, 
   db, 
@@ -185,7 +187,7 @@ export default function App() {
   const [sections, setSections] = useState<Section[]>([]);
   const [vocabulary, setVocabulary] = useState<Vocabulary[]>([]);
   const [showHistory, setShowHistory] = useState(false);
-  const [activeView, setActiveView] = useState<'home' | 'admin' | 'tests' | 'learn' | 'progress'>('home');
+  const [activeView, setActiveView] = useState<'home' | 'admin' | 'tests' | 'learn' | 'progress' | 'single-char'>('home');
   const [testType, setTestType] = useState<'vocabulary' | 'grammar' | 'word-order' | null>(null);
   const [quizWord, setQuizWord] = useState<Vocabulary | null>(null);
   const [quizSentence, setQuizSentence] = useState<SavedSentence | null>(null);
@@ -208,92 +210,72 @@ export default function App() {
   const [expandedSentence, setExpandedSentence] = useState<string | null>(null);
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [speakSlowGlobal, setSpeakSlowGlobal] = useState(false);
-  const [voiceType, setVoiceType] = useState<'female' | 'male' | 'child'>('female');
-  const [availableVoices, setAvailableVoices] = useState<SpeechSynthesisVoice[]>([]);
-  const [selectedVoiceURI, setSelectedVoiceURI] = useState<string>('');
+  const [vocabQuizList, setVocabQuizList] = useState<Vocabulary[]>([]);
+  const [vocabQuizIndex, setVocabQuizIndex] = useState<number>(0);
+  const [showQuizHint, setShowQuizHint] = useState(false);
+  const [hideVocabMeaning, setHideVocabMeaning] = useState(true);
+  const [censoredContextText, setCensoredContextText] = useState('');
+  const [isCensoring, setIsCensoring] = useState(false);
+  const [isNavMenuOpen, setIsNavMenuOpen] = useState(false);
+  const navMenuRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
-    const loadVoices = () => {
-      if ('speechSynthesis' in window) {
-        const voices = window.speechSynthesis.getVoices();
-        const zhVoices = voices.filter(v => 
-          v.lang.startsWith('zh') || 
-          v.lang.includes('CN') || 
-          v.lang.includes('HK') || 
-          v.lang.includes('TW')
-        );
-        setAvailableVoices(zhVoices);
+    const handleClickOutside = (event: MouseEvent) => {
+      if (navMenuRef.current && !navMenuRef.current.contains(event.target as Node)) {
+        setIsNavMenuOpen(false);
       }
     };
-    loadVoices();
-    if ('speechSynthesis' in window) {
-      window.speechSynthesis.onvoiceschanged = loadVoices;
+    if (isNavMenuOpen) {
+      document.addEventListener('mousedown', handleClickOutside);
     }
-  }, []);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [isNavMenuOpen]);
 
   useEffect(() => {
-    if (availableVoices.length > 0 && !selectedVoiceURI) {
-      const defaultFemale = availableVoices.find(v => {
-        const nameLower = v.name.toLowerCase();
-        return nameLower.includes('female') || nameLower.includes('xiaoxiao') || nameLower.includes('tingting');
-      });
-      if (defaultFemale) {
-        setSelectedVoiceURI(defaultFemale.voiceURI);
-      } else {
-        setSelectedVoiceURI(availableVoices[0].voiceURI);
-      }
+    let active = true;
+    if (!quizWord) {
+      setCensoredContextText('');
+      return;
     }
-  }, [availableVoices, selectedVoiceURI]);
 
-  const selectGenderVoice = (type: 'female' | 'male' | 'child') => {
-    setVoiceType(type);
-    if (availableVoices.length > 0) {
-      let matched: SpeechSynthesisVoice | undefined = undefined;
-      if (type === 'male') {
-        matched = availableVoices.find(v => {
-          const nameLower = v.name.toLowerCase();
-          return nameLower.includes('male') || 
-                 nameLower.includes('man') || 
-                 nameLower.includes('yunyang') || 
-                 nameLower.includes('kangkang') || 
-                 nameLower.includes('yunjian') || 
-                 nameLower.includes('yunxi') ||
-                 nameLower.includes('shaanxi') ||
-                 nameLower.includes('binbin') ||
-                 nameLower.includes('qiang') ||
-                 nameLower.includes('google zh-cn-x-cng') ||
-                 nameLower.includes('google zh-cn-x-cni');
-        });
-      } else if (type === 'child') {
-        matched = availableVoices.find(v => {
-          const nameLower = v.name.toLowerCase();
-          return nameLower.includes('child') || 
-                 nameLower.includes('kid') || 
-                 nameLower.includes('baby') || 
-                 nameLower.includes('young') ||
-                 nameLower.includes('xiaoyi') ||
-                 nameLower.includes('xiaonuo') ||
-                 nameLower.includes('xiaoxiao');
-        });
-      } else {
-        matched = availableVoices.find(v => {
-          const nameLower = v.name.toLowerCase();
-          return nameLower.includes('female') || 
-                 nameLower.includes('woman') || 
-                 nameLower.includes('xiaoxiao') || 
-                 nameLower.includes('huidi') || 
-                 nameLower.includes('yaoyao') || 
-                 nameLower.includes('xiaoyu') ||
-                 nameLower.includes('lili') ||
-                 nameLower.includes('tingting') ||
-                 nameLower.includes('lulu');
-        });
-      }
-      if (matched) {
-        setSelectedVoiceURI(matched.voiceURI);
-      }
+    const sentence = savedSentences.find(s => s.id === quizWord.sentenceId);
+    if (!sentence) {
+      setCensoredContextText('');
+      return;
     }
-  };
+
+    const fetchCensored = async () => {
+      setIsCensoring(true);
+      try {
+        const censored = await censorTargetWordTranslation(
+          sentence.chinese,
+          sentence.originalText,
+          quizWord.word
+        );
+        if (active) {
+          setCensoredContextText(censored);
+        }
+      } catch (err) {
+        console.error("Lỗi khi ẩn nghĩa tiếng Việt:", err);
+        if (active) {
+          setCensoredContextText(sentence.originalText);
+        }
+      } finally {
+        if (active) {
+          setIsCensoring(false);
+        }
+      }
+    };
+
+    fetchCensored();
+
+    return () => {
+      active = false;
+    };
+  }, [quizWord, savedSentences]);
+
   const [isEditingExplanation, setIsEditingExplanation] = useState(false);
   const [editableExplanation, setEditableExplanation] = useState('');
   const [noteText, setNoteText] = useState('');
@@ -642,9 +624,10 @@ export default function App() {
     setTestType('grammar');
     setActiveView('tests');
     setResult(null); 
+    setShowQuizHint(false);
   };
 
-  const startVocabQuiz = () => {
+  const startVocabQuiz = (targetIdx?: number) => {
     let pool = vocabulary;
     if (vocabSelectedCategory !== 'all' || vocabSelectedDifficulty !== 'all') {
       pool = vocabulary.filter(v => {
@@ -660,13 +643,48 @@ export default function App() {
       setError("Bạn chưa lưu từ vựng nào thuộc chủ đề hoặc mức độ khó đã chọn để ôn tập!");
       return;
     }
-    const random = pool[Math.floor(Math.random() * pool.length)];
-    setQuizWord(random);
+
+    setVocabQuizList(pool);
+    const validIdx = targetIdx !== undefined 
+      ? ((targetIdx % pool.length) + pool.length) % pool.length
+      : 0;
+
+    setVocabQuizIndex(validIdx);
+    setQuizWord(pool[validIdx]);
     setQuizTimer(15);
     setQuizStage('running');
     setTestType('vocabulary');
     setActiveView('tests');
     setResult(null);
+    setShowQuizHint(false);
+    setHideVocabMeaning(true);
+  };
+
+  const nextVocabWord = () => {
+    let pool = vocabQuizList;
+    if (pool.length === 0) {
+      startVocabQuiz(0);
+      return;
+    }
+    const nextIdx = (vocabQuizIndex + 1) % pool.length;
+    setVocabQuizIndex(nextIdx);
+    setQuizWord(pool[nextIdx]);
+    setQuizTimer(15);
+    setQuizStage('running');
+    setShowQuizHint(false);
+    setHideVocabMeaning(true);
+  };
+
+  const prevVocabWord = () => {
+    let pool = vocabQuizList;
+    if (pool.length === 0) return;
+    const prevIdx = (vocabQuizIndex - 1 + pool.length) % pool.length;
+    setVocabQuizIndex(prevIdx);
+    setQuizWord(pool[prevIdx]);
+    setQuizTimer(15);
+    setQuizStage('running');
+    setShowQuizHint(false);
+    setHideVocabMeaning(true);
   };
 
   const startWordOrderQuiz = (sentence?: SavedSentence) => {
@@ -811,76 +829,14 @@ export default function App() {
      
      try {
        const voices = window.speechSynthesis.getVoices();
-       const zhVoices = voices.filter(v => 
+       const zhVoice = voices.find(v => 
          v.lang.startsWith('zh') || 
          v.lang.includes('CN') || 
          v.lang.includes('HK') || 
          v.lang.includes('TW')
        );
-       
-       let targetVoice: SpeechSynthesisVoice | undefined = undefined;
-
-       // 1. If we have a specific chosen voice URI, try to use it
-       if (selectedVoiceURI) {
-         targetVoice = zhVoices.find(v => v.voiceURI === selectedVoiceURI);
-       }
-
-       // 2. Otherwise/Fallback: match based on voiceType
-       if (!targetVoice) {
-         if (voiceType === 'male') {
-           targetVoice = zhVoices.find(v => {
-             const nameLower = v.name.toLowerCase();
-             return nameLower.includes('male') || 
-                    nameLower.includes('man') || 
-                    nameLower.includes('yunyang') || 
-                    nameLower.includes('kangkang') || 
-                    nameLower.includes('yunjian') || 
-                    nameLower.includes('yunxi') ||
-                    nameLower.includes('shaanxi') ||
-                    nameLower.includes('binbin') ||
-                    nameLower.includes('qiang') ||
-                    nameLower.includes('google zh-cn-x-cng') ||
-                    nameLower.includes('google zh-cn-x-cni');
-           });
-         } else if (voiceType === 'child') {
-           targetVoice = zhVoices.find(v => {
-             const nameLower = v.name.toLowerCase();
-             return nameLower.includes('child') || 
-                    nameLower.includes('kid') || 
-                    nameLower.includes('baby') || 
-                    nameLower.includes('young') ||
-                    nameLower.includes('xiaoyi') ||
-                    nameLower.includes('xiaonuo') ||
-                    nameLower.includes('xiaoxiao');
-           });
-         } else {
-           targetVoice = zhVoices.find(v => {
-             const nameLower = v.name.toLowerCase();
-             return nameLower.includes('female') || 
-                    nameLower.includes('woman') || 
-                    nameLower.includes('xiaoxiao') || 
-                    nameLower.includes('huidi') || 
-                    nameLower.includes('yaoyao') || 
-                    nameLower.includes('xiaoyu') ||
-                    nameLower.includes('lili') ||
-                    nameLower.includes('tingting') ||
-                    nameLower.includes('lulu');
-           });
-         }
-       }
-
-       if (targetVoice) {
-         utterance.voice = targetVoice;
-       }
-
-       // Apply pitch adjustments as an enhancement or fallback
-       if (voiceType === 'male') {
-         utterance.pitch = 0.82; // Lower pitch
-       } else if (voiceType === 'child') {
-         utterance.pitch = 1.38; // Higher pitch
-         utterance.rate = isSlow ? 0.55 : 1.05;
-       } else {
-         utterance.pitch = 1.0;
+       if (zhVoice) {
+         utterance.voice = zhVoice;
        }
      } catch (e) {
        console.error("Error setting speech voice:", e);
@@ -1567,47 +1523,108 @@ export default function App() {
     <div className="min-h-screen bg-sleek-bg text-sleek-text flex flex-col font-sans mb-20 lg:mb-0 overflow-x-hidden">
       {/* Top Navigation Bar */}
       <nav className="h-16 bg-white border-b border-sleek-border px-2 sm:px-4 md:px-8 flex items-center justify-between shrink-0 sticky top-0 z-50">
-        <div className="flex items-center gap-1.5 sm:gap-3">
-          <div className="w-6 h-6 sm:w-8 sm:h-8 bg-primary rounded-lg flex items-center justify-center shrink-0">
-            <span className="text-white font-bold text-sm sm:text-xl leading-none">Z</span>
-          </div>
-          <span className="font-bold text-xs sm:text-base md:text-xl tracking-tight truncate max-w-[85px] xs:max-w-[120px] sm:max-w-none">Zhongwen AI</span>
-        </div>
-        
-        {/* Desktop Navigation */}
-        <div className="hidden lg:flex flex-1 justify-center px-4">
-            <div className="flex bg-slate-100 p-1 rounded-xl">
-              <button 
-                onClick={() => { setActiveView('home'); setTestType(null); }}
-                className={`px-6 py-2 rounded-lg text-sm font-bold transition-all flex items-center gap-2 ${activeView === 'home' ? 'bg-white text-primary shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
-              >
-                <Library size={16} /> Thư viện
-              </button>
-              <button 
-                onClick={() => { setActiveView('learn'); setTestType(null); }}
-                className={`px-6 py-2 rounded-lg text-sm font-bold transition-all flex items-center gap-2 ${activeView === 'learn' ? 'bg-white text-emerald-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
-              >
-                <BookOpen size={16} /> Học tập
-              </button>
-              <button 
-                onClick={() => { setActiveView('progress'); setTestType(null); }}
-                className={`px-6 py-2 rounded-lg text-sm font-bold transition-all flex items-center gap-2 ${activeView === 'progress' ? 'bg-white text-orange-500 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
-              >
-                <Flame size={16} className={activeView === 'progress' ? 'fill-orange-500/10' : ''} /> Chuyên cần
-              </button>
-              <button 
-                onClick={() => { setActiveView('admin'); setTestType(null); }}
-                className={`px-6 py-2 rounded-lg text-sm font-bold transition-all flex items-center gap-2 ${activeView === 'admin' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
-              >
-                <Settings size={16} /> Quản trị
-              </button>
-              <button 
-                onClick={() => { setActiveView('tests'); setTestType(null); }}
-                className={`px-6 py-2 rounded-lg text-sm font-bold transition-all flex items-center gap-2 ${activeView === 'tests' ? 'bg-white text-orange-500 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
-              >
-                <Zap size={16} /> Luyện tập
-              </button>
+        <div className="flex items-center gap-2 sm:gap-4">
+          <div 
+            onClick={() => { setActiveView('home'); setTestType(null); }}
+            className="flex items-center gap-1.5 sm:gap-3 cursor-pointer select-none"
+          >
+            <div className="w-7 h-7 sm:w-8 sm:h-8 bg-primary rounded-xl flex items-center justify-center shrink-0 shadow-sm">
+              <span className="text-white font-bold text-sm sm:text-lg leading-none">Z</span>
             </div>
+            <span className="font-extrabold text-xs sm:text-base md:text-lg tracking-tight text-slate-900 truncate max-w-[85px] xs:max-w-[120px] sm:max-w-none">
+              Zhongwen AI
+            </span>
+          </div>
+
+          {/* Compact 3-Stripe Vertical Navigation Menu Trigger (Visible on larger screens, hidden on mobile) */}
+          <div className="relative hidden lg:block" ref={navMenuRef}>
+            <button
+              onClick={() => setIsNavMenuOpen(prev => !prev)}
+              className={`flex items-center gap-2 px-3 py-1.5 sm:py-2 rounded-xl text-xs sm:text-sm font-bold transition-all cursor-pointer border ${
+                isNavMenuOpen 
+                  ? 'bg-slate-900 text-white border-slate-900 shadow-sm' 
+                  : 'bg-slate-50 hover:bg-slate-100 text-slate-700 border-slate-200/80'
+              }`}
+              title="Danh mục chức năng (Menu)"
+            >
+              <Menu size={17} className={isNavMenuOpen ? 'text-primary' : 'text-slate-600'} />
+              <span className="hidden sm:inline-flex items-center gap-1.5 font-bold">
+                {activeView === 'home' && <><Library size={15} className="text-primary" /> Thư viện</>}
+                {activeView === 'learn' && <><BookOpen size={15} className="text-emerald-600" /> Học tập</>}
+                {activeView === 'single-char' && <><Sparkles size={15} className="text-indigo-600" /> Chữ đơn</>}
+                {activeView === 'progress' && <><Flame size={15} className="text-orange-500" /> Chuyên cần</>}
+                {activeView === 'tests' && <><Zap size={15} className="text-amber-500" /> Luyện tập</>}
+                {activeView === 'admin' && <><Settings size={15} className="text-purple-600" /> Quản trị</>}
+              </span>
+              <ChevronDown size={13} className={`transition-transform duration-200 text-slate-400 ${isNavMenuOpen ? 'rotate-180 text-white' : ''}`} />
+            </button>
+
+            {/* Vertical Menu Dropdown Popover */}
+            <AnimatePresence>
+              {isNavMenuOpen && (
+                <motion.div
+                  initial={{ opacity: 0, y: 6, scale: 0.97 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  exit={{ opacity: 0, y: 4, scale: 0.97 }}
+                  transition={{ duration: 0.15, ease: 'easeOut' }}
+                  className="absolute left-0 mt-2 w-64 sm:w-72 bg-white rounded-2xl border border-slate-100 shadow-2xl p-2 z-50 divide-y divide-slate-100"
+                >
+                  <div className="px-3 py-1.5">
+                    <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Danh mục chức năng</p>
+                  </div>
+
+                  <div className="py-1 space-y-1">
+                    {[
+                      { id: 'home', label: 'Thư viện', desc: 'Sổ tay câu & chủ đề học', icon: Library, color: 'text-primary bg-primary/10' },
+                      { id: 'learn', label: 'Học tập', desc: 'Luyện đọc, pinyin & dịch nghĩa', icon: BookOpen, color: 'text-emerald-600 bg-emerald-50' },
+                      { id: 'single-char', label: 'Chữ đơn & Bộ thủ', desc: 'Video nét bút thuận & tập viết', icon: Sparkles, color: 'text-indigo-600 bg-indigo-50' },
+                      { id: 'progress', label: 'Chuyên cần', desc: 'Thống kê chuỗi ngày & giờ học', icon: Flame, color: 'text-orange-500 bg-orange-50' },
+                      { id: 'tests', label: 'Luyện tập', desc: 'Khảo thí từ vựng & ghép từ', icon: Zap, color: 'text-amber-500 bg-amber-50' },
+                      { id: 'admin', label: 'Quản trị', desc: 'Thêm câu mới & tạo chủ đề', icon: Settings, color: 'text-purple-600 bg-purple-50' },
+                    ].map(item => {
+                      const Icon = item.icon;
+                      const isActive = activeView === item.id;
+                      return (
+                        <button
+                          key={item.id}
+                          onClick={() => {
+                            setActiveView(item.id as any);
+                            setTestType(null);
+                            setIsNavMenuOpen(false);
+                          }}
+                          className={`w-full flex items-center justify-between p-2.5 rounded-xl transition-all text-left cursor-pointer group ${
+                            isActive 
+                              ? 'bg-slate-900 text-white shadow-md' 
+                              : 'hover:bg-slate-50 text-slate-700'
+                          }`}
+                        >
+                          <div className="flex items-center gap-3 min-w-0">
+                            <div className={`w-8 h-8 rounded-xl flex items-center justify-center shrink-0 transition-colors ${
+                              isActive ? 'bg-white/20 text-white' : item.color
+                            }`}>
+                              <Icon size={17} />
+                            </div>
+                            <div className="min-w-0">
+                              <p className={`text-xs sm:text-sm font-bold truncate ${isActive ? 'text-white' : 'text-slate-800'}`}>
+                                {item.label}
+                              </p>
+                              <p className={`text-[10px] sm:text-[11px] truncate ${isActive ? 'text-slate-300' : 'text-slate-400'}`}>
+                                {item.desc}
+                              </p>
+                            </div>
+                          </div>
+
+                          {isActive && (
+                            <span className="w-2 h-2 rounded-full bg-emerald-400 shrink-0 mr-1 animate-pulse" />
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </div>
         </div>
 
         <div className="flex items-center gap-1.5 sm:gap-2 md:gap-4">
@@ -1631,92 +1648,6 @@ export default function App() {
             >
               🐢 Chậm
             </button>
-          </div>
-
-          {/* Voice Type Selection */}
-          <div className="flex items-center gap-1 bg-slate-100 p-0.5 sm:p-1 rounded-xl border border-slate-200/40 shrink-0">
-            <button
-              onClick={() => selectGenderVoice('female')}
-              className={`px-1.5 py-1 sm:px-2 sm:py-1 rounded-lg text-[9px] sm:text-[10px] font-black uppercase tracking-wider transition-all cursor-pointer ${
-                voiceType === 'female' ? 'bg-white text-rose-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'
-              }`}
-              title="Giọng đọc Nữ"
-            >
-              👩 Nữ
-            </button>
-            <button
-              onClick={() => selectGenderVoice('male')}
-              className={`px-1.5 py-1 sm:px-2 sm:py-1 rounded-lg text-[9px] sm:text-[10px] font-black uppercase tracking-wider transition-all cursor-pointer ${
-                voiceType === 'male' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'
-              }`}
-              title="Giọng đọc Nam"
-            >
-              👨 Nam
-            </button>
-            <button
-              onClick={() => selectGenderVoice('child')}
-              className={`px-1.5 py-1 sm:px-2 sm:py-1 rounded-lg text-[9px] sm:text-[10px] font-black uppercase tracking-wider transition-all cursor-pointer ${
-                voiceType === 'child' ? 'bg-white text-emerald-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'
-              }`}
-              title="Giọng trẻ em"
-            >
-              👶 Bé
-            </button>
-
-            {availableVoices.length > 0 && (
-              <select
-                value={selectedVoiceURI}
-                onChange={(e) => {
-                  const uri = e.target.value;
-                  setSelectedVoiceURI(uri);
-                  const voice = availableVoices.find(v => v.voiceURI === uri);
-                  if (voice) {
-                    const nameLower = voice.name.toLowerCase();
-                    if (
-                      nameLower.includes('male') || 
-                      nameLower.includes('man') || 
-                      nameLower.includes('yunyang') || 
-                      nameLower.includes('kangkang') || 
-                      nameLower.includes('yunjian') || 
-                      nameLower.includes('binbin') ||
-                      nameLower.includes('qiang') ||
-                      nameLower.includes('google zh-cn-x-cng') ||
-                      nameLower.includes('google zh-cn-x-cni')
-                    ) {
-                      setVoiceType('male');
-                    } else if (
-                      nameLower.includes('child') || 
-                      nameLower.includes('kid') || 
-                      nameLower.includes('baby') || 
-                      nameLower.includes('young') ||
-                      nameLower.includes('xiaoyi') ||
-                      nameLower.includes('xiaonuo')
-                    ) {
-                      setVoiceType('child');
-                    } else {
-                      setVoiceType('female');
-                    }
-                  }
-                }}
-                className="ml-1 px-1.5 py-0.5 sm:px-2 bg-white hover:bg-slate-50 border border-slate-200 text-[9px] sm:text-[10px] font-bold text-slate-600 rounded-lg outline-none focus:ring-1 focus:ring-emerald-500 cursor-pointer max-w-[65px] sm:max-w-[110px] truncate transition-colors"
-                title="Chọn giọng chi tiết từ thiết bị"
-              >
-                {availableVoices.map((voice) => {
-                  let displayName = voice.name
-                    .replace('Microsoft', 'MS')
-                    .replace('Online (Natural)', '')
-                    .replace('Google', 'GG')
-                    .replace('普通话（中国大陆）', 'Mandarin')
-                    .replace('國語（台灣）', 'TW')
-                    .replace('廣東話（香港）', 'HK');
-                  return (
-                    <option key={voice.voiceURI} value={voice.voiceURI}>
-                      {displayName}
-                    </option>
-                  );
-                })}
-              </select>
-            )}
           </div>
 
           <div className="hidden md:flex items-center gap-3">
@@ -1763,38 +1694,45 @@ export default function App() {
       </nav>
 
       {/* Bottom Navigation for Mobile */}
-      <div className="lg:hidden fixed bottom-0 left-0 right-0 h-16 bg-white border-t border-sleek-border flex items-center justify-around px-1 z-50 pb-safe">
+      <div className="lg:hidden fixed bottom-0 left-0 right-0 h-16 bg-white border-t border-sleek-border flex items-center justify-around px-0.5 z-50 pb-safe">
         <button 
           onClick={() => { setActiveView('home'); setTestType(null); }}
-          className={`flex flex-col items-center gap-1 px-2.5 py-1 rounded-xl transition-all ${activeView === 'home' ? 'text-primary' : 'text-slate-400'}`}
+          className={`flex flex-col items-center gap-1 px-1 py-1 rounded-xl transition-all ${activeView === 'home' ? 'text-primary' : 'text-slate-400'}`}
         >
           <Library size={18} className={activeView === 'home' ? 'fill-primary/10' : ''} />
           <span className="text-[9px] font-bold">Thư viện</span>
         </button>
         <button 
           onClick={() => { setActiveView('learn'); setTestType(null); }}
-          className={`flex flex-col items-center gap-1 px-2.5 py-1 rounded-xl transition-all ${activeView === 'learn' ? 'text-emerald-600' : 'text-slate-400'}`}
+          className={`flex flex-col items-center gap-1 px-1 py-1 rounded-xl transition-all ${activeView === 'learn' ? 'text-emerald-600' : 'text-slate-400'}`}
         >
           <BookOpen size={18} className={activeView === 'learn' ? 'fill-emerald-50' : ''} />
           <span className="text-[9px] font-bold">Học tập</span>
         </button>
         <button 
+          onClick={() => { setActiveView('single-char'); setTestType(null); }}
+          className={`flex flex-col items-center gap-1 px-1 py-1 rounded-xl transition-all ${activeView === 'single-char' ? 'text-indigo-600' : 'text-slate-400'}`}
+        >
+          <Sparkles size={18} className={activeView === 'single-char' ? 'fill-indigo-50' : ''} />
+          <span className="text-[9px] font-bold">Chữ đơn</span>
+        </button>
+        <button 
           onClick={() => { setActiveView('progress'); setTestType(null); }}
-          className={`flex flex-col items-center gap-1 px-2.5 py-1 rounded-xl transition-all ${activeView === 'progress' ? 'text-orange-500' : 'text-slate-400'}`}
+          className={`flex flex-col items-center gap-1 px-1 py-1 rounded-xl transition-all ${activeView === 'progress' ? 'text-orange-500' : 'text-slate-400'}`}
         >
           <Flame size={18} className={activeView === 'progress' ? 'fill-orange-50' : ''} />
           <span className="text-[9px] font-bold">Chuyên cần</span>
         </button>
         <button 
           onClick={() => { setActiveView('admin'); setTestType(null); }}
-          className={`flex flex-col items-center gap-1 px-2.5 py-1 rounded-xl transition-all ${activeView === 'admin' ? 'text-indigo-600' : 'text-slate-400'}`}
+          className={`flex flex-col items-center gap-1 px-1 py-1 rounded-xl transition-all ${activeView === 'admin' ? 'text-indigo-600' : 'text-slate-400'}`}
         >
           <Plus size={18} className={activeView === 'admin' ? 'fill-indigo-50/50' : ''} />
           <span className="text-[9px] font-bold">Thêm mới</span>
         </button>
         <button 
           onClick={() => { setActiveView('tests'); setTestType(null); }}
-          className={`flex flex-col items-center gap-1 px-2.5 py-1 rounded-xl transition-all ${activeView === 'tests' ? 'text-orange-500' : 'text-slate-400'}`}
+          className={`flex flex-col items-center gap-1 px-1 py-1 rounded-xl transition-all ${activeView === 'tests' ? 'text-orange-500' : 'text-slate-400'}`}
         >
           <Zap size={18} className={activeView === 'tests' ? 'fill-orange-50' : ''} />
           <span className="text-[9px] font-bold">Luyện tập</span>
@@ -2255,115 +2193,13 @@ export default function App() {
                   
                   return (
                     <>
-                      {/* Desktop Navigation Block */}
-                      <div className="hidden md:flex flex-col md:flex-row items-center justify-between gap-4 bg-white p-4 rounded-2xl border border-slate-100 shadow-sm animate-in fade-in duration-300">
-                        {/* Left Block: List & Index Counter */}
-                        <div className="flex items-center gap-3 w-full md:w-auto justify-between md:justify-start">
-                          <button 
-                            onClick={() => setResult(null)}
-                            className="flex items-center gap-2 text-xs font-black uppercase tracking-wider text-slate-500 hover:text-slate-800 bg-slate-100 hover:bg-slate-200 px-4 py-2.5 rounded-xl transition-all cursor-pointer"
-                          >
-                            <List size={14} /> Danh sách câu khác
-                          </button>
-                          
-                          <div className="flex items-center gap-1.5 font-extrabold text-sm text-slate-400 bg-slate-50 px-3.5 py-2 rounded-xl border border-slate-100">
-                            <span className="text-slate-800">{currentNo}</span>
-                            <span className="text-slate-300">/</span>
-                            <span>{totalCount}</span>
-                          </div>
-                        </div>
-
-                        {/* Middle Block: Prev / Next Navigation Buttons */}
-                        <div className="flex items-center gap-3 w-full md:w-auto justify-center">
-                          <button
-                            onClick={() => {
-                              if (totalCount === 0) return;
-                              const prevIndex = (currentIndex - 1 + totalCount) % totalCount;
-                              setResult(learnSentences[prevIndex]);
-                            }}
-                            disabled={totalCount <= 1}
-                            className="flex items-center gap-2 text-xs font-black uppercase tracking-wider text-emerald-700 hover:text-white bg-emerald-50 hover:bg-emerald-600 disabled:opacity-40 disabled:pointer-events-none px-5 py-2.5 rounded-xl transition-all duration-200 border border-emerald-100/50 hover:border-emerald-600 shadow-sm flex-1 md:flex-initial text-center justify-center cursor-pointer"
-                          >
-                            ← Câu trước
-                          </button>
-                          
-                          <button
-                            onClick={() => {
-                              if (totalCount === 0) return;
-                              const nextIndex = (currentIndex + 1) % totalCount;
-                              setResult(learnSentences[nextIndex]);
-                            }}
-                            disabled={totalCount <= 1}
-                            className="flex items-center gap-2 text-xs font-black uppercase tracking-wider text-emerald-700 hover:text-white bg-emerald-50 hover:bg-emerald-600 disabled:opacity-40 disabled:pointer-events-none px-5 py-2.5 rounded-xl transition-all duration-200 border border-emerald-100/50 hover:border-emerald-600 shadow-sm flex-1 md:flex-initial text-center justify-center cursor-pointer"
-                          >
-                            Câu kế tiếp →
-                          </button>
-                        </div>
-
-                        {/* Right Block: Active Topic Badge */}
-                        <span className="text-xs font-bold text-emerald-600 bg-emerald-50 px-3 py-2 rounded-xl uppercase tracking-wider w-full md:w-auto text-center border border-emerald-100/30">
-                          Chủ đề: {categories.find(c => c.id === (result as any).categoryId)?.name || 'Chung'}
-                        </span>
-                      </div>
-
-                      {/* Mobile Compact Navigation Block */}
-                      <div className="flex md:hidden items-center justify-between gap-2 bg-white p-3 rounded-2xl border border-slate-100 shadow-sm animate-in fade-in duration-300">
-                        <button 
-                          onClick={() => setResult(null)}
-                          className="p-2.5 text-slate-500 hover:text-slate-800 bg-slate-50 hover:bg-slate-100 border border-slate-100/60 rounded-xl transition-all cursor-pointer"
-                          title="Danh sách câu khác"
-                        >
-                          <List size={16} />
-                        </button>
-
-                        <div className="flex items-center gap-1">
-                          <button
-                            onClick={() => {
-                              if (totalCount === 0) return;
-                              const prevIndex = (currentIndex - 1 + totalCount) % totalCount;
-                              setResult(learnSentences[prevIndex]);
-                            }}
-                            disabled={totalCount <= 1}
-                            className="p-2 text-emerald-700 hover:text-emerald-900 bg-emerald-50 hover:bg-emerald-100 border border-emerald-100/40 rounded-xl disabled:opacity-40 disabled:pointer-events-none transition-all cursor-pointer"
-                            title="Câu trước"
-                          >
-                            <ChevronLeft size={16} />
-                          </button>
-
-                          <span className="text-xs font-black text-slate-700 bg-slate-50 px-2.5 py-1.5 rounded-lg border border-slate-100/60 min-w-[45px] text-center">
-                            {currentNo}/{totalCount}
-                          </span>
-
-                          <button
-                            onClick={() => {
-                              if (totalCount === 0) return;
-                              const nextIndex = (currentIndex + 1) % totalCount;
-                              setResult(learnSentences[nextIndex]);
-                            }}
-                            disabled={totalCount <= 1}
-                            className="p-2 text-emerald-700 hover:text-emerald-900 bg-emerald-50 hover:bg-emerald-100 border border-emerald-100/40 rounded-xl disabled:opacity-40 disabled:pointer-events-none transition-all cursor-pointer"
-                            title="Câu kế tiếp"
-                          >
-                            <ChevronRight size={16} />
-                          </button>
-                        </div>
-
-                        <button
-                          onClick={() => setIsLearnSettingsOpen(true)}
-                          className="p-2.5 text-emerald-700 hover:text-emerald-900 bg-emerald-50 hover:bg-emerald-100 border border-emerald-100/40 rounded-xl transition-all cursor-pointer"
-                          title="Thay đổi chủ đề / Mức độ"
-                        >
-                          <SlidersHorizontal size={16} />
-                        </button>
-                      </div>
-
                       <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
                   {/* Left Column: Chữ tiếng Trung, Pinyin, và Dịch nghĩa */}
                   <div className="lg:col-span-6 space-y-6 lg:sticky lg:top-24">
                     <div className="sleek-card bg-white relative overflow-hidden transition-all shadow-md">
                       <div className="absolute top-0 right-0 w-32 h-32 bg-primary/5 rounded-full -mr-16 -mt-16"></div>
-                      <div className="flex items-center justify-between gap-2 mb-4 border-b border-slate-50 pb-3">
-                        <span className="text-[10px] font-black text-emerald-600 bg-emerald-50 px-2.5 py-1 rounded-full uppercase tracking-tighter shrink-0">
+                      <div className="flex items-center justify-between gap-2 mb-3 border-b border-slate-50 pb-2">
+                        <span className="text-[10px] font-black text-emerald-600 bg-emerald-50 px-2.5 py-0.5 rounded-full uppercase tracking-tighter shrink-0">
                           Văn bản học tập
                         </span>
                         
@@ -2374,7 +2210,7 @@ export default function App() {
                             title="Nghe tốc độ thường (1.0x)"
                             className="p-1 bg-white text-primary rounded-lg hover:bg-primary/5 shadow-sm transition-colors flex items-center justify-center h-7 w-7 cursor-pointer"
                           >
-                            <Volume2 size={14}/>
+                            <Volume2 size={15}/>
                           </button>
                           <button 
                             onClick={() => handleSpeak(result.chinese, true)} 
@@ -2404,26 +2240,28 @@ export default function App() {
                         </div>
                       </div>
                       
-                      {/* Dynamic Vector Illustration Card */}
+                      {/* Dynamic Vector Illustration Card (Compacted) */}
                       {result.illustrationSvg ? (
-                        <div className="w-full flex justify-center mb-6">
+                        <div className="w-full flex justify-center mb-3">
                           <div 
-                            className="w-full max-w-[200px] aspect-square rounded-2xl overflow-hidden p-3 bg-slate-50 border border-slate-100/80 flex items-center justify-center shadow-inner relative group select-none transition-transform hover:scale-105 duration-300" 
+                            className="w-24 h-24 sm:w-28 sm:h-28 rounded-2xl overflow-hidden p-1.5 bg-slate-50 border border-slate-100/80 flex items-center justify-center shadow-inner relative group select-none transition-transform hover:scale-105 duration-200 shrink-0" 
                             dangerouslySetInnerHTML={{ __html: result.illustrationSvg }} 
                           />
                         </div>
                       ) : (
                         user && 'id' in result && (
-                          <div className="mb-6 p-4 rounded-2xl border border-dashed border-slate-200 bg-slate-50 flex flex-col items-center justify-center text-center">
+                          <div className="mb-3 p-2.5 rounded-xl border border-dashed border-slate-200 bg-slate-50/70 flex items-center justify-between gap-2">
                             {isGeneratingIllustration ? (
-                              <div className="flex flex-col items-center gap-2.5 py-2">
-                                <Loader2 className="text-emerald-500 animate-spin" size={24} />
-                                <p className="text-xs text-slate-500 font-bold animate-pulse">Đang phác họa tranh vector AI...</p>
+                              <div className="flex items-center gap-2 py-1 mx-auto">
+                                <Loader2 className="text-emerald-500 animate-spin" size={16} />
+                                <p className="text-[11px] text-slate-500 font-bold animate-pulse">Đang phác họa tranh vector AI...</p>
                               </div>
                             ) : (
                               <>
-                                <Sparkles className="text-emerald-500 mb-1.5 animate-bounce" size={18} />
-                                <p className="text-[11px] text-slate-500 font-semibold mb-2.5">Trực quan hóa câu nói bằng tranh minh họa Vector AI</p>
+                                <div className="flex items-center gap-1.5 text-left">
+                                  <Sparkles className="text-emerald-500 shrink-0" size={15} />
+                                  <p className="text-[10px] text-slate-500 font-medium line-clamp-1">Trực quan hóa bằng tranh vector AI</p>
+                                </div>
                                 <button
                                   onClick={async () => {
                                     setIsGeneratingIllustration(true);
@@ -2439,9 +2277,9 @@ export default function App() {
                                       setIsGeneratingIllustration(false);
                                     }
                                   }}
-                                  className="px-4 py-1.5 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white font-bold text-xs rounded-xl transition-all shadow-md shadow-emerald-100 flex items-center gap-1.5 cursor-pointer border-none"
+                                  className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white font-bold text-[10px] rounded-lg transition-all shadow-sm flex items-center gap-1 shrink-0 cursor-pointer border-none"
                                 >
-                                  🎨 Vẽ minh họa AI
+                                  🎨 Vẽ AI
                                 </button>
                               </>
                             )}
@@ -2449,10 +2287,10 @@ export default function App() {
                         )
                       )}
 
-                      <div className="mb-6 md:mb-8">
-                        <p className="text-4xl md:text-6xl font-bold text-slate-800 tracking-[0.12em] mb-3 md:mb-4 leading-normal break-words">{renderHighlightedChinese(result.chinese, (result as any).id)}</p>
+                      <div className="mb-4 md:mb-5">
+                        <p className="text-4xl md:text-6xl font-bold text-slate-800 tracking-[0.12em] mb-2.5 md:mb-3 leading-normal break-words">{renderHighlightedChinese(result.chinese, (result as any).id)}</p>
                         
-                        <div className="flex items-center gap-2 group/pinyin min-h-[32px]">
+                        <div className="flex items-center gap-2 group/pinyin min-h-[28px]">
                           {hidePinyin ? (
                             <span 
                               onClick={() => setHidePinyin(false)}
@@ -2476,7 +2314,7 @@ export default function App() {
                         </div>
                       </div>
 
-                      <div className="space-y-3 md:space-y-4 pt-6 md:pt-8 border-t border-slate-50">
+                      <div className="space-y-3 md:space-y-4 pt-4 md:pt-5 border-t border-slate-50">
                         <div className="flex items-center justify-between">
                           <p className="text-[10px] md:text-xs font-black text-slate-400 uppercase tracking-widest">Dịch nghĩa</p>
                           {!hideMeaning && (
@@ -3573,6 +3411,8 @@ export default function App() {
                </div>
              )}
           </div>
+        ) : activeView === 'single-char' ? (
+          <SingleCharacterLearn />
         ) : (
           /* Test Center View */
           <div className="max-w-4xl mx-auto w-full">
@@ -3590,7 +3430,7 @@ export default function App() {
                   {/* Vocabulary Test Card */}
                   <motion.div 
                     whileHover={{ y: -8 }}
-                    onClick={startVocabQuiz}
+                    onClick={() => startVocabQuiz()}
                     className="bg-white p-6 md:p-8 rounded-[2.5rem] border-2 border-slate-100 shadow-xl shadow-slate-200/50 cursor-pointer group hover:border-orange-500/30 transition-all flex flex-col justify-between"
                   >
                     <div className="w-full">
@@ -4132,9 +3972,48 @@ export default function App() {
                     initial={{ opacity: 0, scale: 0.95 }}
                     animate={{ opacity: 1, scale: 1 }}
                     exit={{ opacity: 0, scale: 0.95 }}
-                    className="sleek-card p-4 md:p-8 min-h-[350px] md:min-h-[500px] flex flex-col items-center justify-center text-center bg-white"
+                    className="sleek-card p-4 md:p-8 min-h-[350px] md:min-h-[500px] flex flex-col items-center justify-between text-center bg-white"
                   >
-                    <div className="mb-4 md:mb-12 w-full px-2 md:px-6">
+                    {/* Header with Progress Bar & Counter */}
+                    <div className="w-full mb-4 md:mb-6">
+                      <div className="flex items-center justify-between gap-3 mb-2 px-1">
+                        <button
+                          type="button"
+                          onClick={prevVocabWord}
+                          disabled={vocabQuizList.length <= 1}
+                          className="px-2.5 py-1 text-xs font-bold text-slate-500 hover:text-slate-800 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed flex items-center gap-1"
+                        >
+                          <ChevronRight size={14} className="rotate-180" /> Từ trước
+                        </button>
+                        
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs md:text-sm font-black text-slate-700 bg-slate-100 px-3 py-1 rounded-full">
+                            Từ <span className="text-primary font-black">{vocabQuizIndex + 1}</span> / {vocabQuizList.length || 1}
+                          </span>
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={nextVocabWord}
+                          disabled={vocabQuizList.length <= 1}
+                          className="px-2.5 py-1 text-xs font-bold text-slate-700 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed flex items-center gap-1"
+                        >
+                          Từ sau <ChevronRight size={14} />
+                        </button>
+                      </div>
+
+                      {/* Progress Bar */}
+                      <div className="w-full h-2 bg-slate-100 rounded-full overflow-hidden">
+                        <div 
+                          className="h-full bg-gradient-to-r from-orange-500 to-primary rounded-full transition-all duration-300"
+                          style={{
+                            width: `${vocabQuizList.length > 0 ? Math.round(((vocabQuizIndex + 1) / vocabQuizList.length) * 100) : 100}%`
+                          }}
+                        />
+                      </div>
+                    </div>
+
+                    <div className="my-2 md:my-6 w-full px-2 md:px-6">
                       <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 md:mb-4">Bạn có nhớ từ này không?</p>
                       <div className="flex flex-wrap items-center justify-center gap-2 md:gap-4">
                         <h3 className={`text-4xl md:text-8xl lg:text-9xl font-black leading-tight tracking-[0.05em] md:tracking-[0.1em] ${quizWord?.type === 'grammar' ? 'text-indigo-600' : 'text-orange-600'}`}>
@@ -4165,58 +4044,147 @@ export default function App() {
                     </div>
 
                     {quizStage === 'running' ? (
-                      <div className="space-y-4 md:space-y-12 w-full px-4 md:px-8">
+                      <div className="space-y-4 md:space-y-6 w-full px-4 md:px-8">
                         <div className="flex flex-col items-center">
                           <button 
-                            onClick={() => {
-                              const sentence = savedSentences.find(s => s.id === quizWord?.sentenceId);
-                              if (sentence) {
-                                alert(`Gợi ý ngữ cảnh:\n${quizMode === 'zh2vi' ? sentence.originalText : sentence.chinese}`);
-                              } else {
-                                alert("Không tìm thấy ngữ cảnh câu ví dụ.");
-                              }
-                            }}
-                            className="bg-slate-50 text-slate-500 font-bold px-4 py-1.5 md:px-6 md:py-2 rounded-xl border border-slate-100 hover:bg-slate-100 transition-all flex items-center gap-1.5 md:gap-2 mb-4 md:mb-8 text-xs md:text-sm"
+                            type="button"
+                            onClick={() => setShowQuizHint(!showQuizHint)}
+                            className={`font-bold px-4 py-2 md:px-6 md:py-2.5 rounded-xl border transition-all flex items-center justify-center gap-1.5 md:gap-2 mb-4 md:mb-6 text-xs md:text-sm cursor-pointer ${
+                              showQuizHint 
+                                ? 'bg-amber-100 border-amber-200 text-amber-800 shadow-sm' 
+                                : 'bg-slate-50 text-slate-500 border-slate-100 hover:bg-slate-100'
+                            }`}
                           >
-                            <Lightbulb size={16} className="text-amber-500" /> Xem gợi ý ngữ cảnh
+                            <Lightbulb size={16} className={showQuizHint ? "text-amber-600 fill-amber-300" : "text-amber-500"} /> 
+                            {showQuizHint ? 'Ẩn gợi ý ngữ cảnh' : 'Xem gợi ý ngữ cảnh'}
                           </button>
+
+                          {showQuizHint && (
+                            <motion.div 
+                              initial={{ opacity: 0, scale: 0.95, y: -5 }}
+                              animate={{ opacity: 1, scale: 1, y: 0 }}
+                              className="w-full max-w-sm bg-gradient-to-br from-amber-50 to-amber-100/40 border border-amber-100 rounded-2xl p-4 md:p-5 mb-6 text-left shadow-md"
+                            >
+                              <div className="flex items-center gap-2 mb-2 text-amber-800">
+                                <Lightbulb size={14} className="text-amber-600 fill-amber-300 shrink-0" />
+                                <span className="text-[10px] font-black uppercase tracking-widest">Ngữ cảnh gốc ví dụ</span>
+                              </div>
+                              {(() => {
+                                const sentence = savedSentences.find(s => s.id === quizWord?.sentenceId);
+                                if (sentence) {
+                                  return (
+                                    <div className="space-y-2">
+                                      {isCensoring ? (
+                                        <div className="flex items-center gap-2 text-amber-700 font-medium py-1">
+                                          <div className="w-4 h-4 rounded-full border-2 border-amber-600 border-t-transparent animate-spin"></div>
+                                          <span className="text-xs md:text-sm italic">Đang phân tích ẩn nghĩa từ...</span>
+                                        </div>
+                                      ) : (
+                                        <p className="text-sm md:text-base font-bold text-slate-800 leading-relaxed tracking-wide">
+                                          {hideVocabMeaning && censoredContextText ? censoredContextText : sentence.originalText}
+                                        </p>
+                                      )}
+                                      
+                                      <div className="mt-2 pt-2 border-t border-amber-200/30 flex flex-wrap items-center justify-between gap-2">
+                                        <button
+                                          type="button"
+                                          onClick={() => setHideVocabMeaning(!hideVocabMeaning)}
+                                          className="text-[9px] md:text-[10px] bg-amber-200/60 hover:bg-amber-200 text-amber-900 font-black px-2.5 py-1 rounded-lg transition-colors cursor-pointer border border-amber-300/40"
+                                        >
+                                          {hideVocabMeaning ? "Hiện nghĩa đầy đủ" : "Ẩn nghĩa của từ"}
+                                        </button>
+                                        
+                                        <span className="text-[8px] md:text-[9px] text-amber-800/80 font-bold italic">
+                                          {hideVocabMeaning ? "💡 Đã ẩn nghĩa từ mục tiêu" : "💡 Đang hiện nghĩa đầy đủ"}
+                                        </span>
+                                      </div>
+                                    </div>
+                                  );
+                                } else {
+                                  return (
+                                    <p className="text-slate-500 italic text-xs md:text-sm">Không tìm thấy ngữ cảnh câu ví dụ.</p>
+                                  );
+                                }
+                              })()}
+                            </motion.div>
+                          )}
                           
-                          <button 
-                            onClick={() => setQuizStage('revealed')}
-                            className="w-full max-w-sm py-4 md:py-6 bg-slate-800 text-white rounded-2xl md:rounded-3xl font-black text-lg md:text-2xl shadow-xl shadow-slate-200 hover:bg-slate-900 transition-all active:scale-[0.98]"
-                          >
-                            XEM ĐÁP ÁN
-                          </button>
+                          <div className="flex flex-col sm:flex-row items-center gap-3 w-full max-w-md">
+                            <button 
+                              type="button"
+                              onClick={() => {
+                                setQuizStage('revealed');
+                                setShowQuizHint(false); // Hide the hint once answer is revealed
+                              }}
+                              className="flex-1 w-full py-3.5 md:py-4 bg-slate-800 hover:bg-slate-900 text-white rounded-2xl font-black text-base md:text-lg shadow-lg shadow-slate-200 transition-all active:scale-[0.98] cursor-pointer"
+                            >
+                              XEM ĐÁP ÁN
+                            </button>
+
+                            <button 
+                              type="button"
+                              onClick={nextVocabWord}
+                              className="w-full sm:w-auto px-5 py-3.5 md:py-4 bg-emerald-600 hover:bg-emerald-700 text-white rounded-2xl font-bold text-sm md:text-base shadow-md shadow-emerald-200 transition-all active:scale-[0.98] cursor-pointer flex items-center justify-center gap-1.5"
+                              title="Từ này đã biết, chuyển ngay sang từ tiếp theo"
+                            >
+                              Đã biết, từ tiếp theo <ChevronRight size={18} />
+                            </button>
+                          </div>
                         </div>
                       </div>
                     ) : (
                       <motion.div 
                         initial={{ opacity: 0, y: 20 }}
                         animate={{ opacity: 1, y: 0 }}
-                        className="space-y-4 md:space-y-8 w-full px-2 md:px-6"
+                        className="space-y-4 md:space-y-6 w-full px-2 md:px-6"
                       >
                         <div className={`p-4 md:p-8 rounded-2xl md:rounded-[3rem] border-2 ${quizWord?.type === 'grammar' ? 'bg-indigo-50 border-indigo-100' : 'bg-orange-50 border-orange-100'}`}>
-                          <p className="text-[10px] md:text-xs font-bold text-slate-400 uppercase tracking-widest mb-3 md:mb-6">Ngữ cảnh & Ý nghĩa</p>
+                          <div className="flex items-center justify-between mb-3 md:mb-6 border-b border-slate-100 pb-2">
+                            <p className="text-[10px] md:text-xs font-bold text-slate-400 uppercase tracking-widest">Ngữ cảnh & Ý nghĩa</p>
+                            <button
+                              type="button"
+                              onClick={() => setHideVocabMeaning(!hideVocabMeaning)}
+                              className="text-[9px] md:text-[10px] bg-white hover:bg-slate-50 text-slate-600 font-bold px-2 py-1 rounded-lg transition-all cursor-pointer border border-slate-200 shadow-sm"
+                            >
+                              {hideVocabMeaning ? "Hiện nghĩa đầy đủ" : "Ẩn nghĩa của từ"}
+                            </button>
+                          </div>
                           {savedSentences.find(s => s.id === quizWord?.sentenceId) ? (
                             <div className="space-y-2 md:space-y-4">
                               <p className="text-xl md:text-3xl lg:text-4xl font-bold text-slate-800 leading-relaxed tracking-[0.05em] md:tracking-[0.12em]">
                                 {savedSentences.find(s => s.id === quizWord?.sentenceId)?.chinese}
                               </p>
-                              <p className="text-sm md:text-xl text-slate-500 italic font-medium">
-                                {savedSentences.find(s => s.id === quizWord?.sentenceId)?.originalText}
-                              </p>
+                              {isCensoring ? (
+                                <div className="flex items-center gap-2 text-slate-400 py-1 justify-center">
+                                  <div className="w-4 h-4 rounded-full border-2 border-slate-400 border-t-transparent animate-spin"></div>
+                                  <span className="text-xs md:text-sm italic">Đang phân tích ẩn nghĩa từ...</span>
+                                </div>
+                              ) : (
+                                <p className="text-sm md:text-xl text-slate-500 italic font-medium">
+                                  {hideVocabMeaning && censoredContextText ? censoredContextText : savedSentences.find(s => s.id === quizWord?.sentenceId)?.originalText}
+                                </p>
+                              )}
                             </div>
                           ) : (
                             <p className="text-slate-500 italic text-sm">Dữ liệu câu ví dụ đã bị xóa hoặc không tồn tại.</p>
                           )}
                         </div>
 
-                        <button 
-                          onClick={startVocabQuiz}
-                          className="w-full max-w-sm py-3.5 md:py-5 bg-primary text-white rounded-xl md:rounded-[2rem] font-bold text-base md:text-xl shadow-lg hover:bg-primary-dark transition-all"
-                        >
-                          Từ tiếp theo
-                        </button>
+                        <div className="flex flex-col sm:flex-row items-center justify-center gap-3 w-full max-w-md mx-auto">
+                          <button 
+                            onClick={prevVocabWord}
+                            disabled={vocabQuizList.length <= 1}
+                            className="w-full sm:w-auto px-5 py-3 md:py-4 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl md:rounded-2xl font-bold text-sm md:text-base transition-all disabled:opacity-30 disabled:cursor-not-allowed flex items-center justify-center gap-1 cursor-pointer"
+                          >
+                            <ChevronRight size={18} className="rotate-180" /> Từ trước
+                          </button>
+                          <button 
+                            onClick={nextVocabWord}
+                            className="flex-1 w-full py-3.5 md:py-4 bg-primary text-white rounded-xl md:rounded-2xl font-bold text-base md:text-lg shadow-lg hover:bg-primary-dark transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                          >
+                            Từ tiếp theo <ChevronRight size={18} />
+                          </button>
+                        </div>
                       </motion.div>
                     )}
                   </motion.div>
@@ -4324,14 +4292,8 @@ export default function App() {
                     <div className="lg:col-span-8 order-1 lg:order-2 w-full">
                       <div className="sleek-card min-h-[350px] lg:min-h-[525px] flex flex-col justify-between bg-white p-4 md:p-8">
                         {/* Header of Quiz */}
-                        <div className="w-full text-center space-y-1.5 md:space-y-3 mb-3 md:mb-4">
-                          <span className="inline-block text-[9px] md:text-[10px] font-black text-indigo-500 uppercase tracking-widest bg-indigo-50 px-2.5 py-1 rounded-xl border border-indigo-100/50">
-                            Sắp xếp trật tự từ
-                          </span>
-                          <p className="text-[9px] md:text-xs font-bold text-slate-400 uppercase tracking-wider">
-                            Ghép thành câu tiếng Trung chính xác cho ý nghĩa dưới đây:
-                          </p>
-                          <h4 className="text-base md:text-2xl font-black text-slate-800 leading-normal max-w-xl mx-auto px-2 md:px-4">
+                        <div className="w-full text-center mb-4 md:mb-6">
+                          <h4 className="text-lg md:text-2xl lg:text-3xl font-black text-slate-800 leading-normal max-w-2xl mx-auto px-2 md:px-4">
                             “ {quizSentence?.originalText || quizSentence?.meaning} ”
                           </h4>
                         </div>
@@ -4354,7 +4316,7 @@ export default function App() {
                                       type="button"
                                       disabled={wordOrderResultState !== 'playing'}
                                       onClick={() => setFocusedSlotIndex(displayIdx)}
-                                      className={`h-[34px] md:h-[42px] px-3 md:px-4 flex items-center justify-center rounded-lg md:rounded-xl border-2 border-dashed transition-all duration-150 cursor-pointer text-xs md:text-sm ${
+                                      className={`h-[40px] sm:h-[50px] md:h-[60px] lg:h-[66px] px-3 md:px-5 flex items-center justify-center rounded-lg md:rounded-xl border-2 border-dashed transition-all duration-150 cursor-pointer text-xs sm:text-sm md:text-base ${
                                         isFocused
                                           ? 'border-indigo-600 bg-indigo-50/70 text-indigo-750 shadow-md scale-105 animate-pulse font-bold'
                                           : 'border-slate-300 bg-white hover:border-slate-400 hover:bg-slate-50 text-slate-400 font-semibold'
@@ -4394,7 +4356,7 @@ export default function App() {
                                       });
                                       setFocusedSlotIndex(displayIdx);
                                     }}
-                                    className={`px-3 py-1.5 md:px-4 md:py-2 font-extrabold text-xs md:text-lg lg:text-xl rounded-lg md:rounded-xl border shadow-sm transition-all animate-in zoom-in duration-100 ${buttonClass}`}
+                                    className={`px-3 py-1.5 md:px-5 md:py-3.5 font-extrabold text-lg sm:text-2xl md:text-3xl lg:text-4xl rounded-lg md:rounded-xl border shadow-sm transition-all animate-in zoom-in duration-100 ${buttonClass}`}
                                   >
                                     {segment.text}
                                   </button>
@@ -4435,7 +4397,7 @@ export default function App() {
                                         return next;
                                       });
                                     }}
-                                    className={`px-3 py-1.5 md:px-4.5 md:py-2.5 font-extrabold text-xs md:text-lg lg:text-xl rounded-lg md:rounded-xl border transition-all duration-150 cursor-pointer ${
+                                    className={`px-3 py-1.5 md:px-5 md:py-3.5 font-extrabold text-lg sm:text-2xl md:text-3xl lg:text-4xl rounded-lg md:rounded-xl border transition-all duration-150 cursor-pointer ${
                                       isSelected
                                         ? 'bg-slate-50 text-slate-300 border-slate-100 opacity-40 select-none cursor-default'
                                         : 'bg-white text-slate-800 border-slate-200 shadow-sm hover:border-indigo-500 hover:shadow-md hover:scale-105 active:scale-95'
@@ -4464,7 +4426,7 @@ export default function App() {
                                   </span>
                                   
                                   <div className="flex items-center justify-center gap-1.5 pt-1">
-                                    <h3 className="text-xl md:text-4xl font-extrabold text-slate-800 tracking-[0.05em] md:tracking-[0.12em]">
+                                    <h3 className="text-2xl sm:text-3xl md:text-5xl lg:text-6xl font-black text-slate-800 tracking-[0.05em] md:tracking-[0.12em]">
                                       {quizSentence?.chinese}
                                     </h3>
                                     <div className="flex items-center gap-1">
@@ -4885,6 +4847,75 @@ export default function App() {
           </>
         )}
       </AnimatePresence>
+
+      {/* Mobile Compact Bottom Navigation Bar */}
+      <nav className="lg:hidden fixed bottom-0 left-0 right-0 h-16 bg-white/95 backdrop-blur-md border-t border-slate-200/80 px-2 flex items-center justify-around z-40 shadow-lg">
+        <button
+          type="button"
+          onClick={() => { setActiveView('home'); setTestType(null); }}
+          className={`flex flex-col items-center justify-center flex-1 py-1 transition-all cursor-pointer ${
+            activeView === 'home' ? 'text-primary font-black' : 'text-slate-400 hover:text-slate-600'
+          }`}
+        >
+          <Library size={18} className={activeView === 'home' ? 'stroke-[2.5]' : ''} />
+          <span className="text-[10px] mt-1 font-bold">Thư viện</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => { setActiveView('learn'); setTestType(null); }}
+          className={`flex flex-col items-center justify-center flex-1 py-1 transition-all cursor-pointer ${
+            activeView === 'learn' ? 'text-emerald-600 font-black' : 'text-slate-400 hover:text-slate-600'
+          }`}
+        >
+          <BookOpen size={18} className={activeView === 'learn' ? 'stroke-[2.5]' : ''} />
+          <span className="text-[10px] mt-1 font-bold">Học tập</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => { setActiveView('single-char'); setTestType(null); }}
+          className={`flex flex-col items-center justify-center flex-1 py-1 transition-all cursor-pointer ${
+            activeView === 'single-char' ? 'text-indigo-600 font-black' : 'text-slate-400 hover:text-slate-600'
+          }`}
+        >
+          <Sparkles size={18} className={activeView === 'single-char' ? 'stroke-[2.5]' : ''} />
+          <span className="text-[10px] mt-1 font-bold">Chữ đơn</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => { setActiveView('progress'); setTestType(null); }}
+          className={`flex flex-col items-center justify-center flex-1 py-1 transition-all cursor-pointer ${
+            activeView === 'progress' ? 'text-orange-500 font-black' : 'text-slate-400 hover:text-slate-600'
+          }`}
+        >
+          <Flame size={18} className={activeView === 'progress' ? 'stroke-[2.5] fill-orange-500/10' : ''} />
+          <span className="text-[10px] mt-1 font-bold">Chuyên cần</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => { setActiveView('tests'); setTestType(null); }}
+          className={`flex flex-col items-center justify-center flex-1 py-1 transition-all cursor-pointer ${
+            activeView === 'tests' ? 'text-amber-500 font-black' : 'text-slate-400 hover:text-slate-600'
+          }`}
+        >
+          <Zap size={18} className={activeView === 'tests' ? 'stroke-[2.5]' : ''} />
+          <span className="text-[10px] mt-1 font-bold">Luyện tập</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => { setActiveView('admin'); setTestType(null); }}
+          className={`flex flex-col items-center justify-center flex-1 py-1 transition-all cursor-pointer ${
+            activeView === 'admin' ? 'text-purple-600 font-black' : 'text-slate-400 hover:text-slate-600'
+          }`}
+        >
+          <Settings size={18} className={activeView === 'admin' ? 'stroke-[2.5]' : ''} />
+          <span className="text-[10px] mt-1 font-bold">Quản trị</span>
+        </button>
+      </nav>
     </div>
   );
 }

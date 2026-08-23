@@ -132,3 +132,127 @@ export const generateIllustrationSvg = async (chinese: string, meaning: string):
   }
   return svg.trim();
 };
+
+export const censorTargetWordTranslation = async (
+  chineseSentence: string,
+  vietnameseSentence: string,
+  targetWord: string
+): Promise<string> => {
+  const ai = getGenAI();
+  if (!ai) return vietnameseSentence;
+  try {
+    const response = await ai.models.generateContent({
+      model: "gemini-3.5-flash",
+      contents: `Trong câu tiếng Trung: "${chineseSentence}"
+Với bản dịch tiếng Việt tương ứng: "${vietnameseSentence}"
+Hãy tìm phần nghĩa tiếng Việt tương ứng chính xác của từ hoặc cấu trúc ngữ pháp sau: "${targetWord}" trong câu dịch trên.
+Sau đó, hãy che/ẩn phần nghĩa tiếng Việt đó đi bằng cách thay thế nó bằng cụm từ "[ ẩn ]" hoặc "[ ___ ]" trong câu tiếng Việt.
+Chỉ trả về DUY NHẤT một câu tiếng Việt mới đã che nghĩa đó đi. Không viết thêm bất kỳ lời giải thích, tiêu đề hay ký tự đặc biệt nào khác.`,
+    });
+    return response.text?.trim() || vietnameseSentence;
+  } catch (error) {
+    console.error("Lỗi khi che nghĩa của từ:", error);
+    return vietnameseSentence;
+  }
+};
+
+export interface RadicalInfo {
+  radical: string;
+  pinyin: string;
+  sinoVietnamese: string;
+  meaning: string;
+  description: string;
+}
+
+export interface CharacterAnalysisResult {
+  character: string;
+  pinyin: string;
+  sinoVietnamese: string;
+  vietnameseMeaning: string;
+  totalStrokes: number;
+  strokeSequenceInstructions: string[];
+  radicals: RadicalInfo[];
+  composition: string;
+  examples: {
+    word: string;
+    pinyin: string;
+    meaning: string;
+  }[];
+}
+
+export const analyzeSingleCharacter = async (char: string): Promise<CharacterAnalysisResult> => {
+  const ai = getGenAI();
+  if (!ai) {
+    throw new Error("Chưa cấu hình API Key cho AI. Vui lòng kiểm tra cài đặt môi trường.");
+  }
+  const response = await ai.models.generateContent({
+    model: "gemini-3.7-flash",
+    contents: `Hãy phân tích chi tiết chữ Hán đơn sau: "${char}".
+    Yêu cầu trả về cấu trúc JSON chính xác theo mô tả sau:
+    - character: Chữ Hán đó.
+    - pinyin: Phiên âm Pinyin (có dấu giọng).
+    - sinoVietnamese: Phiên âm Hán-Việt tương ứng.
+    - vietnameseMeaning: Nghĩa tiếng Việt cốt lõi của chữ này.
+    - totalStrokes: Tổng số nét viết của chữ.
+    - strokeSequenceInstructions: Mảng các chuỗi mô tả từng nét viết theo thứ tự đúng quy tắc bút thuận (ví dụ: ["Nét 1: Phẩy từ trên xuống", "Nét 2: Ngang gập móc", ...]).
+    - radicals: Mảng các bộ thủ cấu thành chữ này, mỗi phần tử gồm:
+      - radical: Bộ thủ (ký tự chữ Hán).
+      - pinyin: Pinyin của bộ thủ.
+      - sinoVietnamese: Âm Hán-Việt của bộ thủ.
+      - meaning: Nghĩa tiếng Việt của bộ thủ.
+      - description: Mô tả vai trò, ý nghĩa biểu thị của bộ thủ đó trong chữ được phân tích.
+    - composition: Giải nghĩa cấu tạo chữ (ví dụ: Chữ hội ý, gồm bộ Nhân đứng biểu thị người và bộ Thổ biểu thị đất..., cấu trúc Trái-Phải hay Trên-Dưới, mối quan hệ tượng hình/hội ý/hình thanh).
+    - examples: 3 từ ghép thông dụng chứa chữ này cùng Pinyin và nghĩa tiếng Việt.`,
+    config: {
+      responseMimeType: "application/json",
+      responseSchema: {
+        type: Type.OBJECT,
+        properties: {
+          character: { type: Type.STRING },
+          pinyin: { type: Type.STRING },
+          sinoVietnamese: { type: Type.STRING },
+          vietnameseMeaning: { type: Type.STRING },
+          totalStrokes: { type: Type.INTEGER },
+          strokeSequenceInstructions: {
+            type: Type.ARRAY,
+            items: { type: Type.STRING }
+          },
+          radicals: {
+            type: Type.ARRAY,
+            items: {
+              type: Type.OBJECT,
+              properties: {
+                radical: { type: Type.STRING },
+                pinyin: { type: Type.STRING },
+                sinoVietnamese: { type: Type.STRING },
+                meaning: { type: Type.STRING },
+                description: { type: Type.STRING }
+              },
+              required: ["radical", "pinyin", "sinoVietnamese", "meaning", "description"]
+            }
+          },
+          composition: { type: Type.STRING },
+          examples: {
+            type: Type.ARRAY,
+            items: {
+              type: Type.OBJECT,
+              properties: {
+                word: { type: Type.STRING },
+                pinyin: { type: Type.STRING },
+                meaning: { type: Type.STRING }
+              },
+              required: ["word", "pinyin", "meaning"]
+            }
+          }
+        },
+        required: ["character", "pinyin", "sinoVietnamese", "vietnameseMeaning", "totalStrokes", "strokeSequenceInstructions", "radicals", "composition", "examples"]
+      }
+    }
+  });
+
+  const content = response.text;
+  if (!content) throw new Error("Không nhận được phản hồi từ AI");
+  return JSON.parse(content) as CharacterAnalysisResult;
+};
+
+
