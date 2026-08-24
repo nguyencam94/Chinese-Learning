@@ -21,10 +21,24 @@ import {
   CheckCircle2,
   AlertCircle,
   Video,
-  Award
+  Award,
+  Download,
+  FileText,
+  FileDown,
+  Loader2,
+  X,
+  Share2,
+  Sliders,
+  Check
 } from 'lucide-react';
 import HanziWriter from 'hanzi-writer';
 import { analyzeSingleCharacter, CharacterAnalysisResult } from '../services/geminiService';
+import { 
+  recordStrokeVideo, 
+  generateHandwritingWorksheet, 
+  VideoExportResult 
+} from '../utils/strokeVideoExporter';
+import { exportSingleCharacterToDocx } from '../utils/docxExporter';
 
 const SUGGESTED_CHARS = [
   { char: "好", meaning: "Tốt, đẹp", pinyin: "hǎo", sinoViet: "Hảo" },
@@ -81,6 +95,21 @@ export default function SingleCharacterLearn() {
   const [isEraser, setIsEraser] = useState(false);
   const [charOpacity, setCharOpacity] = useState(30);
   const [showGrid, setShowGrid] = useState(true);
+
+  // Video & Worksheet Export States
+  const [isExportingVideo, setIsExportingVideo] = useState(false);
+  const [videoExportProgress, setVideoExportProgress] = useState(0);
+  const [videoExportStatus, setVideoExportStatus] = useState('');
+  const [videoExportSpeed, setVideoExportSpeed] = useState(0.9);
+  const [videoExportStrokeStyle, setVideoExportStrokeStyle] = useState<'slender' | 'medium' | 'kaiti'>('slender');
+  const [videoExportHighlightRadical, setVideoExportHighlightRadical] = useState(true);
+  const [videoExportShowPenTip, setVideoExportShowPenTip] = useState(true);
+  const [videoExportShowFaintOutline, setVideoExportShowFaintOutline] = useState(true);
+  const [exportedVideo, setExportedVideo] = useState<VideoExportResult | null>(null);
+  const [showVideoModal, setShowVideoModal] = useState(false);
+  const [isExportingWorksheet, setIsExportingWorksheet] = useState(false);
+  const [isExportingDocx, setIsExportingDocx] = useState(false);
+  const [exportError, setExportError] = useState<string | null>(null);
 
   // Fetch character analysis on selected character change
   useEffect(() => {
@@ -385,6 +414,93 @@ export default function SingleCharacterLearn() {
     }
   };
 
+  // Video Export Handler
+  const handleExportVideo = async () => {
+    if (!analysis) return;
+    setIsExportingVideo(true);
+    setVideoExportProgress(5);
+    setVideoExportStatus('Chuẩn bị phòng thu video...');
+    setExportError(null);
+
+    try {
+      const result = await recordStrokeVideo(selectedChar, analysis, {
+        speed: videoExportSpeed,
+        strokeStyle: videoExportStrokeStyle,
+        highlightRadical: videoExportHighlightRadical,
+        showPenTip: videoExportShowPenTip,
+        showFaintOutline: videoExportShowFaintOutline,
+        resolution: 720,
+        onProgress: (prog, status) => {
+          setVideoExportProgress(prog);
+          setVideoExportStatus(status);
+        }
+      });
+
+      setExportedVideo(result);
+      setShowVideoModal(true);
+
+      // Auto-trigger browser download
+      const a = document.createElement('a');
+      a.href = result.url;
+      a.download = result.filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+
+    } catch (err: any) {
+      console.error("Lỗi xuất video:", err);
+      setExportError(err?.message || "Không thể xuất video nét chữ. Vui lòng thử lại.");
+    } finally {
+      setIsExportingVideo(false);
+    }
+  };
+
+  // Printable Worksheet Handler
+  const handleDownloadWorksheet = async () => {
+    if (!analysis) return;
+    setIsExportingWorksheet(true);
+    setExportError(null);
+
+    try {
+      const { url, filename } = await generateHandwritingWorksheet(selectedChar, analysis);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+    } catch (err: any) {
+      console.error("Lỗi xuất phiếu tập viết:", err);
+      setExportError("Không thể tạo phiếu tập viết lúc này. Vui lòng thử lại sau.");
+    } finally {
+      setIsExportingWorksheet(false);
+    }
+  };
+
+  // Word (.docx) Document Handler
+  const handleDownloadDocx = async () => {
+    if (!analysis) return;
+    setIsExportingDocx(true);
+    setExportError(null);
+
+    try {
+      const { blob, filename } = await exportSingleCharacterToDocx(analysis);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (err: any) {
+      console.error("Lỗi xuất file Word:", err);
+      setExportError("Không thể xuất file Word lúc này. Vui lòng thử lại sau.");
+    } finally {
+      setIsExportingDocx(false);
+    }
+  };
+
   const handleSearchSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     const trimmed = charInput.trim();
@@ -640,6 +756,108 @@ export default function SingleCharacterLearn() {
                           Tô màu bộ thủ (<span className="text-rose-600 font-bold">đỏ</span>)
                         </label>
                       </div>
+
+                      {/* DOWNLOAD VIDEO & WORKSHEET ACTIONS */}
+                      <div className="pt-3 border-t border-slate-200/60 space-y-2.5">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[11px] font-black uppercase tracking-wider text-slate-400">Tải về học offline:</span>
+                          {exportError && (
+                            <span className="text-[10px] text-rose-500 font-bold">{exportError}</span>
+                          )}
+                        </div>
+
+                        {/* Quick Stroke Style Selector for Video */}
+                        <div className="bg-slate-50 p-2 rounded-xl border border-slate-200/80 space-y-1.5">
+                          <div className="text-[11px] font-bold text-slate-600 flex items-center justify-between">
+                            <span>Độ dày nét video:</span>
+                            <span className="text-indigo-600 font-black">
+                              {videoExportStrokeStyle === 'slender' ? '🖋️ Nét thanh mảnh (0.5mm)' : videoExportStrokeStyle === 'medium' ? '🖊️ Bút máy (0.7mm)' : '🖌️ Khải thư'}
+                            </span>
+                          </div>
+                          <div className="grid grid-cols-3 gap-1.5">
+                            {[
+                              { id: 'slender', label: 'Thanh mảnh' },
+                              { id: 'medium', label: 'Bút máy' },
+                              { id: 'kaiti', label: 'Khải thư' }
+                            ].map((s) => (
+                              <button
+                                key={s.id}
+                                type="button"
+                                onClick={() => setVideoExportStrokeStyle(s.id as any)}
+                                className={`py-1 px-1.5 rounded-lg text-[10px] font-bold border transition-all cursor-pointer ${
+                                  videoExportStrokeStyle === s.id
+                                    ? 'bg-indigo-600 text-white border-indigo-600 shadow-xs'
+                                    : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-100'
+                                }`}
+                              >
+                                {s.label}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                          <button
+                            type="button"
+                            onClick={handleExportVideo}
+                            disabled={isExportingVideo || !analysis}
+                            className="px-3 py-2.5 bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-700 hover:to-violet-700 active:scale-95 text-white font-bold text-xs rounded-xl shadow-md transition-all flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
+                            title="Quay và tải video hoạt họa từng nét chữ về điện thoại/máy tính"
+                          >
+                            {isExportingVideo ? (
+                              <>
+                                <Loader2 className="animate-spin" size={14} />
+                                <span className="truncate">{videoExportProgress}% {videoExportStatus || 'Đang xuất...'}</span>
+                              </>
+                            ) : (
+                              <>
+                                <Download size={14} />
+                                <span>Tải Video Nét</span>
+                              </>
+                            )}
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={handleDownloadWorksheet}
+                            disabled={isExportingWorksheet || !analysis}
+                            className="px-3 py-2.5 bg-white hover:bg-slate-50 active:scale-95 text-slate-700 font-bold text-xs rounded-xl border border-slate-200 shadow-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
+                            title="Tải phiếu tập viết khổ A4 có ô kẻ Mễ và từng nét từng bước để in ra giấy"
+                          >
+                            {isExportingWorksheet ? (
+                              <>
+                                <Loader2 className="animate-spin text-indigo-600" size={14} />
+                                <span>Đang tạo phiếu...</span>
+                              </>
+                            ) : (
+                              <>
+                                <FileText size={14} className="text-rose-500" />
+                                <span>Tải Phiếu A4</span>
+                              </>
+                            )}
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={handleDownloadDocx}
+                            disabled={isExportingDocx || !analysis}
+                            className="px-3 py-2.5 bg-blue-50 hover:bg-blue-100 active:scale-95 text-blue-700 font-bold text-xs rounded-xl border border-blue-200 shadow-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
+                            title="Tải tài liệu Word (.docx) chi tiết về chữ Hán, bộ thủ, từ ghép và ô kẻ tập viết"
+                          >
+                            {isExportingDocx ? (
+                              <>
+                                <Loader2 className="animate-spin text-blue-600" size={14} />
+                                <span>Đang xuất...</span>
+                              </>
+                            ) : (
+                              <>
+                                <FileDown size={14} className="text-blue-600" />
+                                <span>Tải File Word</span>
+                              </>
+                            )}
+                          </button>
+                        </div>
+                      </div>
                     </div>
                   )}
 
@@ -802,41 +1020,66 @@ export default function SingleCharacterLearn() {
             
             {/* Main Details Card */}
             <div className="bg-white rounded-3xl border border-slate-100 shadow-sm p-6 md:p-8 space-y-6">
-              <div className="flex items-start gap-6">
-                {/* Oversized Character Graphic */}
-                <div className="relative group select-none flex-shrink-0">
-                  <div className="w-24 h-24 md:w-32 md:h-32 rounded-2xl bg-gradient-to-br from-indigo-50 to-purple-50 border border-indigo-100 flex items-center justify-center text-5xl md:text-7xl font-black text-slate-800 shadow-sm">
-                    {analysis.character}
+              <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-6">
+                <div className="flex items-start gap-5">
+                  {/* Oversized Character Graphic */}
+                  <div className="relative group select-none flex-shrink-0">
+                    <div className="w-24 h-24 md:w-28 md:h-28 rounded-2xl bg-gradient-to-br from-indigo-50 to-purple-50 border border-indigo-100 flex items-center justify-center text-5xl md:text-6xl font-black text-slate-800 shadow-sm">
+                      {analysis.character}
+                    </div>
+                    <button
+                      onClick={() => speakChinese(analysis.character)}
+                      className="absolute -bottom-2 -right-2 p-2 bg-indigo-600 hover:bg-indigo-700 active:scale-95 text-white rounded-full shadow-md transition-all cursor-pointer"
+                      title="Nghe phát âm"
+                    >
+                      <Volume2 size={16} />
+                    </button>
                   </div>
-                  <button
-                    onClick={() => speakChinese(analysis.character)}
-                    className="absolute -bottom-2 -right-2 p-2 bg-indigo-600 hover:bg-indigo-700 active:scale-95 text-white rounded-full shadow-md transition-all cursor-pointer"
-                    title="Nghe phát âm"
-                  >
-                    <Volume2 size={16} />
-                  </button>
+
+                  {/* Character Core Properties */}
+                  <div className="space-y-2 flex-1 min-w-0">
+                    <div className="flex flex-wrap gap-1.5 items-center">
+                      <span className="text-[10px] font-black uppercase tracking-widest bg-emerald-50 text-emerald-700 border border-emerald-100 px-2 py-0.5 rounded-md">
+                        Pinyin: {analysis.pinyin}
+                      </span>
+                      <span className="text-[10px] font-black uppercase tracking-widest bg-amber-50 text-amber-700 border border-amber-100 px-2 py-0.5 rounded-md">
+                        Hán-Việt: {analysis.sinoVietnamese}
+                      </span>
+                    </div>
+                    
+                    <h2 className="text-lg md:text-2xl font-black text-slate-800 leading-tight">
+                      Nghĩa: {analysis.vietnameseMeaning}
+                    </h2>
+
+                    <div className="flex items-center gap-2 text-xs md:text-sm text-slate-400 font-bold">
+                      <span>Tổng số nét: <span className="text-slate-700 font-black">{analysis.totalStrokes}</span></span>
+                      <span className="w-1 h-1 rounded-full bg-slate-300"></span>
+                      <span>Cấu trúc: <span className="text-indigo-600 font-black">Hán tự đơn</span></span>
+                    </div>
+                  </div>
                 </div>
 
-                {/* Character Core Properties */}
-                <div className="space-y-2 md:space-y-3 flex-1 min-w-0">
-                  <div className="flex flex-wrap gap-1.5 items-center">
-                    <span className="text-[10px] font-black uppercase tracking-widest bg-emerald-50 text-emerald-700 border border-emerald-100 px-2 py-0.5 rounded-md">
-                      Pinyin: {analysis.pinyin}
-                    </span>
-                    <span className="text-[10px] font-black uppercase tracking-widest bg-amber-50 text-amber-700 border border-amber-100 px-2 py-0.5 rounded-md">
-                      Hán-Việt: {analysis.sinoVietnamese}
-                    </span>
-                  </div>
-                  
-                  <h2 className="text-lg md:text-2xl font-black text-slate-800 leading-tight">
-                    Nghĩa: {analysis.vietnameseMeaning}
-                  </h2>
+                {/* Quick Download Buttons */}
+                <div className="flex sm:flex-col gap-2 shrink-0">
+                  <button
+                    type="button"
+                    onClick={handleExportVideo}
+                    disabled={isExportingVideo}
+                    className="flex-1 sm:flex-initial px-3.5 py-2 bg-indigo-600 hover:bg-indigo-700 active:scale-95 text-white font-bold text-xs rounded-xl shadow-sm transition-all flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
+                  >
+                    {isExportingVideo ? <Loader2 className="animate-spin" size={14} /> : <Download size={14} />}
+                    <span>Tải Video Viết</span>
+                  </button>
 
-                  <div className="flex items-center gap-2 text-xs md:text-sm text-slate-400 font-bold">
-                    <span>Tổng số nét: <span className="text-slate-700 font-black">{analysis.totalStrokes}</span></span>
-                    <span className="w-1 h-1 rounded-full bg-slate-300"></span>
-                    <span>Cấu trúc: <span className="text-indigo-600 font-black">Hán tự đơn</span></span>
-                  </div>
+                  <button
+                    type="button"
+                    onClick={handleDownloadWorksheet}
+                    disabled={isExportingWorksheet}
+                    className="flex-1 sm:flex-initial px-3.5 py-2 bg-white hover:bg-slate-50 active:scale-95 text-slate-700 font-bold text-xs rounded-xl border border-slate-200 transition-all flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
+                  >
+                    {isExportingWorksheet ? <Loader2 className="animate-spin text-rose-500" size={14} /> : <FileText size={14} className="text-rose-500" />}
+                    <span>Phiếu Tập Tô</span>
+                  </button>
                 </div>
               </div>
 
@@ -929,6 +1172,220 @@ export default function SingleCharacterLearn() {
           Vui lòng nhập chữ hoặc chọn chữ gợi ý để bắt đầu phân tích.
         </div>
       )}
+      {/* FLOATING RECORDING PROGRESS BANNER */}
+      <AnimatePresence>
+        {isExportingVideo && (
+          <motion.div
+            initial={{ opacity: 0, y: 50 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 50 }}
+            className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 bg-slate-900 text-white px-6 py-4 rounded-2xl shadow-2xl border border-slate-700 flex items-center gap-4 max-w-md w-[90%]"
+          >
+            <div className="w-10 h-10 rounded-xl bg-indigo-500/20 text-indigo-400 flex items-center justify-center shrink-0">
+              <Loader2 className="animate-spin" size={22} />
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className="flex justify-between items-center mb-1.5">
+                <p className="text-xs font-bold text-slate-200">Đang quay video nét chữ "{selectedChar}"...</p>
+                <span className="text-xs font-black text-indigo-400">{videoExportProgress}%</span>
+              </div>
+              <div className="w-full h-1.5 bg-slate-800 rounded-full overflow-hidden">
+                <div 
+                  className="h-full bg-gradient-to-r from-indigo-500 to-rose-500 transition-all duration-300 rounded-full"
+                  style={{ width: `${videoExportProgress}%` }}
+                />
+              </div>
+              <p className="text-[10px] text-slate-400 font-medium truncate mt-1">{videoExportStatus}</p>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* VIDEO PREVIEW & DOWNLOAD LIGHTBOX MODAL */}
+      <AnimatePresence>
+        {showVideoModal && exportedVideo && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/70 backdrop-blur-xs">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="bg-white rounded-3xl shadow-2xl border border-slate-100 max-w-lg w-full max-h-[90vh] flex flex-col overflow-hidden"
+            >
+              {/* Modal Header */}
+              <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-8 h-8 rounded-xl bg-indigo-600 text-white font-black text-sm flex items-center justify-center shadow-xs">
+                    {exportedVideo.character}
+                  </div>
+                  <div>
+                    <h3 className="text-sm md:text-base font-black text-slate-800">
+                      Video Thứ Tự Nét Chữ "{exportedVideo.character}"
+                    </h3>
+                    <p className="text-[11px] text-slate-500 font-medium">
+                      Đã tạo thành công • Có thể tải về hoặc lưu vào máy
+                    </p>
+                  </div>
+                </div>
+
+                <button
+                  onClick={() => setShowVideoModal(false)}
+                  className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-xl transition-all cursor-pointer"
+                >
+                  <X size={18} />
+                </button>
+              </div>
+
+              {/* Modal Body with Video Player */}
+              <div className="p-6 overflow-y-auto space-y-5">
+                <div className="bg-stone-900 rounded-2xl overflow-hidden shadow-inner flex items-center justify-center max-h-[360px]">
+                  <video
+                    src={exportedVideo.url}
+                    controls
+                    autoPlay
+                    loop
+                    playsInline
+                    className="w-full max-h-[360px] object-contain rounded-2xl"
+                  />
+                </div>
+
+                {/* Primary Download Buttons */}
+                <div className="space-y-2">
+                  <a
+                    href={exportedVideo.url}
+                    download={exportedVideo.filename}
+                    className="w-full py-3 px-4 bg-indigo-600 hover:bg-indigo-700 active:scale-98 text-white font-bold text-sm rounded-2xl shadow-md transition-all flex items-center justify-center gap-2 cursor-pointer"
+                  >
+                    <Download size={18} />
+                    <span>Lưu / Tải Lại Video ({exportedVideo.filename.endsWith('.mp4') ? 'MP4' : 'WebM'})</span>
+                  </a>
+
+                  <button
+                    type="button"
+                    onClick={handleDownloadWorksheet}
+                    disabled={isExportingWorksheet}
+                    className="w-full py-2.5 px-4 bg-rose-50 hover:bg-rose-100 active:scale-98 text-rose-700 font-bold text-xs rounded-xl border border-rose-200 transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+                  >
+                    {isExportingWorksheet ? <Loader2 className="animate-spin" size={15} /> : <FileText size={15} />}
+                    <span>Tải Thêm Phiếu Tập Tô A4 (In ra giấy)</span>
+                  </button>
+                </div>
+
+                {/* Re-export Settings */}
+                <div className="p-4 bg-slate-50 rounded-2xl border border-slate-100 space-y-3.5">
+                  <div>
+                    <span className="text-xs font-bold text-slate-700 flex items-center gap-1.5 mb-2">
+                      <Sliders size={13} className="text-indigo-600" /> Kiểu nét chữ khi quay video:
+                    </span>
+                    <div className="grid grid-cols-3 gap-2">
+                      {[
+                        { id: 'slender', label: '🖋️ Thanh mảnh', desc: 'Bút bi / Gel 0.5mm' },
+                        { id: 'medium', label: '🖊️ Bút máy', desc: 'Vừa vặn 0.7mm' },
+                        { id: 'kaiti', label: '🖌️ Khải thư', desc: 'Chuẩn thư pháp' }
+                      ].map((item) => (
+                        <button
+                          key={item.id}
+                          type="button"
+                          onClick={() => setVideoExportStrokeStyle(item.id as any)}
+                          className={`p-2 rounded-xl text-left border transition-all cursor-pointer ${
+                            videoExportStrokeStyle === item.id
+                              ? 'bg-indigo-50 border-indigo-600 ring-2 ring-indigo-600/20 text-indigo-900 shadow-xs'
+                              : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-100'
+                          }`}
+                        >
+                          <div className="text-xs font-bold">{item.label}</div>
+                          <div className="text-[10px] text-slate-400 font-medium">{item.desc}</div>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div>
+                    <span className="text-xs font-bold text-slate-700 mb-1.5 block">Tốc độ viết:</span>
+                    <div className="grid grid-cols-3 gap-2">
+                      {[
+                        { speed: 0.65, label: 'Chậm (0.7x)' },
+                        { speed: 0.9, label: 'Chuẩn (1.0x)' },
+                        { speed: 1.3, label: 'Nhanh (1.3x)' }
+                      ].map((opt) => (
+                        <button
+                          key={opt.speed}
+                          type="button"
+                          onClick={() => setVideoExportSpeed(opt.speed)}
+                          className={`py-1.5 px-2 rounded-xl text-xs font-bold border transition-all cursor-pointer ${
+                            videoExportSpeed === opt.speed
+                              ? 'bg-indigo-600 text-white border-indigo-600 shadow-xs'
+                              : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-100'
+                          }`}
+                        >
+                          {opt.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="pt-2 border-t border-slate-200/60 space-y-2 text-xs">
+                    <div className="grid grid-cols-2 gap-2">
+                      <label className="flex items-center gap-2 text-slate-600 font-medium cursor-pointer select-none">
+                        <input
+                          type="checkbox"
+                          checked={videoExportHighlightRadical}
+                          onChange={(e) => setVideoExportHighlightRadical(e.target.checked)}
+                          className="accent-rose-600 rounded"
+                        />
+                        Tô màu bộ thủ đỏ
+                      </label>
+
+                      <label className="flex items-center gap-2 text-slate-600 font-medium cursor-pointer select-none">
+                        <input
+                          type="checkbox"
+                          checked={videoExportShowPenTip}
+                          onChange={(e) => setVideoExportShowPenTip(e.target.checked)}
+                          className="accent-indigo-600 rounded"
+                        />
+                        Hiện đầu bút di chuyển
+                      </label>
+                    </div>
+
+                    <div className="flex items-center justify-between pt-1">
+                      <label className="flex items-center gap-2 text-slate-600 font-medium cursor-pointer select-none">
+                        <input
+                          type="checkbox"
+                          checked={videoExportShowFaintOutline}
+                          onChange={(e) => setVideoExportShowFaintOutline(e.target.checked)}
+                          className="accent-indigo-600 rounded"
+                        />
+                        Hiện khung nét mờ
+                      </label>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setShowVideoModal(false);
+                          handleExportVideo();
+                        }}
+                        className="text-xs font-bold text-indigo-600 hover:text-indigo-700 underline cursor-pointer"
+                      >
+                        Quay lại video mới
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Modal Footer */}
+              <div className="px-6 py-3.5 bg-slate-50/80 border-t border-slate-100 flex justify-end">
+                <button
+                  type="button"
+                  onClick={() => setShowVideoModal(false)}
+                  className="px-5 py-2 bg-slate-200 hover:bg-slate-300 text-slate-700 font-bold text-xs rounded-xl transition-all cursor-pointer"
+                >
+                  Đóng
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

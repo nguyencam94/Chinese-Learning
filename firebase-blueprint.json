@@ -37,6 +37,7 @@
         "userId": { "type": "string", "description": "The ID of the user who saved the sentence" },
         "categoryId": { "type": "string", "description": "The ID of the category this sentence belongs to" },
         "sectionId": { "type": "string", "description": "The ID of the section this sentence belongs to" },
+        "orderIndex": { "type": "number", "description": "Ordinal position index of the sentence within its section (1 for topic sentence, 2, 3...)" },
         "createdAt": { "type": "string", "format": "date-time", "description": "Timestamp of when the sentence was saved" },
         "note": { "type": "string", "description": "Optional study note or sentence pattern explanation written in Vietnamese" },
         "difficulty": { "type": "string", "enum": ["basic", "easy", "medium", "hard"], "description": "Classification level of difficulty of the sentence" },
@@ -68,7 +69,7 @@
         "createdAt": { "type": "string", "format": "date-time", "description": "Timestamp of creation" },
         "updatedAt": { "type": "string", "format": "date-time", "description": "Timestamp of last update" }
       },
-      "required": ["userId", "date", "duration", "createdAt", "updatedAt"]
+      "required": ["userId", "date", "duration", "updatedAt"]
     }
   },
   "firestore": {

@@ -31,7 +31,12 @@ import {
   EyeOff,
   Menu,
   Maximize2,
-  Palette
+  Palette,
+  FileDown,
+  FileText,
+  Download,
+  FolderPlus,
+  Folder
 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import { 
@@ -43,6 +48,21 @@ import {
   censorTargetWordTranslation 
 } from './services/geminiService';
 import SingleCharacterLearn from './components/SingleCharacterLearn';
+import LearnView from './components/LearnView';
+import SentenceFilterBar from './components/SentenceFilterBar';
+import { AssignSectionModal } from './components/AssignSectionModal';
+import { ReorderSectionSentencesModal } from './components/ReorderSectionSentencesModal';
+import { sortSectionSentences } from './utils/sentenceSort';
+import { 
+  Category, 
+  Vocabulary, 
+  Section, 
+  SavedSentence, 
+  StudySession,
+  ActiveViewType,
+  TestType
+} from './types';
+import { exportLessonsToDocx, LessonDocxData } from './utils/docxExporter';
 import { 
   auth, 
   db, 
@@ -66,49 +86,6 @@ import {
   handleFirestoreError,
   OperationType
 } from './lib/firebase';
-
-interface Category {
-  id: string;
-  name: string;
-  userId: string;
-  createdAt: any;
-}
-
-interface Vocabulary {
-  id: string;
-  word: string;
-  type: 'word' | 'grammar';
-  userId: string;
-  sentenceId: string;
-  createdAt: any;
-}
-
-interface Section {
-  id: string;
-  name: string;
-  categoryId: string;
-  userId: string;
-  createdAt: any;
-}
-
-interface SavedSentence extends TranslationResult {
-  id: string;
-  originalText: string;
-  categoryId?: string;
-  sectionId?: string;
-  createdAt: any;
-  note?: string;
-  difficulty?: 'basic' | 'easy' | 'medium' | 'hard';
-}
-
-interface StudySession {
-  id: string;
-  userId: string;
-  date: string; // YYYY-MM-DD
-  duration: number; // in seconds
-  createdAt: any;
-  updatedAt: any;
-}
 
 const getCategoryTheme = (categoryId?: string, categoriesList: Category[] = []) => {
   const themes = [
@@ -203,6 +180,8 @@ export default function App() {
   const [quizTimer, setQuizTimer] = useState(15);
   const [quizStage, setQuizStage] = useState<'idle' | 'running' | 'revealed'>('idle');
   const [quizMode, setQuizMode] = useState<'vi2zh' | 'zh2vi'>('zh2vi');
+  const [assignSentenceTarget, setAssignSentenceTarget] = useState<SavedSentence | null>(null);
+  const [reorderSectionTarget, setReorderSectionTarget] = useState<Section | null>(null);
 
   // Word Order test states
   const [wordOrderSegments, setWordOrderSegments] = useState<string[]>([]);
@@ -297,6 +276,18 @@ export default function App() {
   const [hidePinyin, setHidePinyin] = useState(true);
   const [hideMeaning, setHideMeaning] = useState(true);
   
+  // Word Document (.docx) Export state
+  const [showDocxExportModal, setShowDocxExportModal] = useState(false);
+  const [isExportingDocx, setIsExportingDocx] = useState(false);
+  const [docxExportProgress, setDocxExportProgress] = useState(0);
+  const [docxExportStatus, setDocxExportStatus] = useState('');
+  const [docxExportScope, setDocxExportScope] = useState<'current' | 'category' | 'all'>('current');
+  const [docxIncludeIllustrations, setDocxIncludeIllustrations] = useState(true);
+  const [docxIncludeGrammar, setDocxIncludeGrammar] = useState(true);
+  const [docxIncludeVariations, setDocxIncludeVariations] = useState(true);
+  const [docxIncludePracticeGrid, setDocxIncludePracticeGrid] = useState(true);
+  const [docxExportError, setDocxExportError] = useState<string | null>(null);
+
   // Study tracking state
   const [studySessions, setStudySessions] = useState<StudySession[]>([]);
   const [activeSecondsToday, setActiveSecondsToday] = useState(0);
@@ -468,6 +459,7 @@ export default function App() {
   const [selectedFilterCategory, setSelectedFilterCategory] = useState<string>('all');
   const [selectedFilterSection, setSelectedFilterSection] = useState<string>('all');
   const [learnSelectedCategory, setLearnSelectedCategory] = useState<string>('all');
+  const [learnSelectedSection, setLearnSelectedSection] = useState<string>('all');
   const [learnSelectedDifficulty, setLearnSelectedDifficulty] = useState<string>('all');
   const [homeSelectedDifficulty, setHomeSelectedDifficulty] = useState<string>('all');
   const [inputDifficulty, setInputDifficulty] = useState<'basic' | 'easy' | 'medium' | 'hard'>('basic');
@@ -611,6 +603,95 @@ export default function App() {
     });
     
     return parts;
+  };
+
+  const handleExportLessonsToDocx = async (overrideScope?: 'current' | 'category' | 'all') => {
+    const scope = overrideScope || docxExportScope;
+    setIsExportingDocx(true);
+    setDocxExportProgress(5);
+    setDocxExportStatus('Khởi tạo tài liệu Word...');
+    setDocxExportError(null);
+
+    try {
+      let targetLessons: LessonDocxData[] = [];
+      let topicTitle = 'Học Tiếng Trung';
+
+      if (scope === 'current') {
+        if (!result) {
+          throw new Error('Chưa có bài học nào được chọn để xuất.');
+        }
+        const currentCategory = 'categoryId' in result && (result as SavedSentence).categoryId 
+          ? categories.find(c => c.id === (result as SavedSentence).categoryId)?.name 
+          : 'Bài học hiện tại';
+        topicTitle = currentCategory || 'Bài học đơn';
+        targetLessons = [{
+          ...result,
+          categoryName: topicTitle,
+          originalText: 'originalText' in result ? (result as any).originalText : undefined,
+          note: 'note' in result ? (result as any).note : undefined,
+        }];
+      } else if (scope === 'category') {
+        const filtered = savedSentences.filter(s => {
+          const matchesCategory = learnSelectedCategory === 'all' ? true : s.categoryId === learnSelectedCategory;
+          const matchesDiff = learnSelectedDifficulty === 'all' ? true : (s.difficulty || 'basic') === learnSelectedDifficulty;
+          return matchesCategory && matchesDiff;
+        });
+        if (filtered.length === 0) {
+          throw new Error('Không có bài học nào trong chủ đề / mức độ đã chọn.');
+        }
+        const currentCatName = learnSelectedCategory === 'all' 
+          ? 'Tất cả chủ đề' 
+          : (categories.find(c => c.id === learnSelectedCategory)?.name || 'Chủ đề học tập');
+        topicTitle = currentCatName;
+        targetLessons = filtered.map(s => ({
+          ...s,
+          categoryName: categories.find(c => c.id === s.categoryId)?.name || 'Chung',
+        }));
+      } else {
+        if (savedSentences.length === 0) {
+          throw new Error('Sổ tay của bạn chưa có câu nào được lưu.');
+        }
+        topicTitle = 'Toàn bộ sổ tay học tập';
+        targetLessons = savedSentences.map(s => ({
+          ...s,
+          categoryName: categories.find(c => c.id === s.categoryId)?.name || 'Chung',
+        }));
+      }
+
+      const { blob, filename } = await exportLessonsToDocx(targetLessons, {
+        title: `TÀI LIỆU HỌC TIẾNG TRUNG - ${topicTitle.toUpperCase()}`,
+        topicName: topicTitle,
+        includeIllustrations: docxIncludeIllustrations,
+        includeGrammar: docxIncludeGrammar,
+        includeVariations: docxIncludeVariations,
+        includePracticeGrid: docxIncludePracticeGrid,
+        onProgress: (percent, statusText) => {
+          setDocxExportProgress(percent);
+          setDocxExportStatus(statusText);
+        }
+      });
+
+      // Trigger browser download
+      const downloadUrl = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = downloadUrl;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(downloadUrl);
+
+      setTimeout(() => {
+        setIsExportingDocx(false);
+        setShowDocxExportModal(false);
+        setDocxExportProgress(0);
+        setDocxExportStatus('');
+      }, 700);
+    } catch (err: any) {
+      console.error('Lỗi khi xuất Word:', err);
+      setDocxExportError(err.message || 'Không thể tạo file Word. Vui lòng thử lại.');
+      setIsExportingDocx(false);
+    }
   };
 
   const startQuiz = (mode: 'vi2zh' | 'zh2vi' = quizMode, sentence?: SavedSentence) => {
@@ -1038,22 +1119,12 @@ export default function App() {
         try {
           if (!auth.currentUser) return;
           const docRef = doc(db, 'study_sessions', docId);
-          const exists = todaySessionExistsRef.current;
-          
-          if (exists) {
-            await updateDoc(docRef, {
-              duration: activeSecondsToday,
-              updatedAt: serverTimestamp()
-            });
-          } else {
-            await setDoc(docRef, {
-              userId: user.uid,
-              date: todayStr,
-              duration: activeSecondsToday,
-              createdAt: serverTimestamp(),
-              updatedAt: serverTimestamp()
-            });
-          }
+          await setDoc(docRef, {
+            userId: user.uid,
+            date: todayStr,
+            duration: activeSecondsToday,
+            updatedAt: serverTimestamp()
+          }, { merge: true });
           lastSavedDurationRef.current = activeSecondsToday;
         } catch (err) {
           console.error("Error saving daily study activity:", err);
@@ -1079,29 +1150,16 @@ export default function App() {
         const docId = `${user.uid}_${todayStr}`;
         const docRef = doc(db, 'study_sessions', docId);
         
-        const exists = todaySessionExistsRef.current;
-        if (exists) {
-          updateDoc(docRef, {
-            duration: currentSeconds,
-            updatedAt: serverTimestamp()
-          }).catch(e => {
-            if (e.code !== 'permission-denied') {
-              console.error("Unmount update failed:", e);
-            }
-          });
-        } else {
-          setDoc(docRef, {
-            userId: user.uid,
-            date: todayStr,
-            duration: currentSeconds,
-            createdAt: serverTimestamp(),
-            updatedAt: serverTimestamp()
-          }).catch(e => {
-            if (e.code !== 'permission-denied') {
-              console.error("Unmount save failed:", e);
-            }
-          });
-        }
+        setDoc(docRef, {
+          userId: user.uid,
+          date: todayStr,
+          duration: currentSeconds,
+          updatedAt: serverTimestamp()
+        }, { merge: true }).catch(e => {
+          if (e?.code !== 'permission-denied') {
+            console.error("Unmount save failed:", e);
+          }
+        });
       }
     };
   }, [user, activeSecondsToday]);
@@ -1256,6 +1314,141 @@ export default function App() {
       });
     } catch (err) {
       handleFirestoreError(err, OperationType.UPDATE, 'saved_sentences');
+    }
+  };
+
+  const handleAssignSection = async (
+    sentenceId: string, 
+    categoryId: string, 
+    sectionId: string, 
+    targetPosition?: 'top' | 'bottom' | number
+  ) => {
+    try {
+      if (!sectionId) {
+        // Unassigning section
+        await updateDoc(doc(db, 'saved_sentences', sentenceId), {
+          categoryId: categoryId,
+          sectionId: '',
+          orderIndex: 0
+        });
+        setSavedSentences(prev => prev.map(s => s.id === sentenceId ? { ...s, categoryId, sectionId: '', orderIndex: 0 } : s));
+        if (result && 'id' in result && (result as SavedSentence).id === sentenceId) {
+          setResult(prev => prev ? { ...prev, categoryId, sectionId: '', orderIndex: 0 } as SavedSentence : null);
+        }
+        return;
+      }
+
+      // Existing sentences in target section (excluding the current one)
+      const existingInSec = sortSectionSentences(
+        savedSentences.filter(s => s.sectionId === sectionId && s.id !== sentenceId)
+      );
+
+      const newOrderedList: { id: string; orderIndex: number }[] = [];
+      let currentSentenceOrder = 1;
+
+      if (targetPosition === 'top' || existingInSec.length === 0) {
+        // Place as topic sentence (position #1)
+        currentSentenceOrder = 1;
+        newOrderedList.push({ id: sentenceId, orderIndex: 1 });
+        existingInSec.forEach((s, idx) => {
+          newOrderedList.push({ id: s.id, orderIndex: idx + 2 });
+        });
+      } else if (typeof targetPosition === 'number') {
+        const insertIdx = Math.max(0, Math.min(existingInSec.length, targetPosition - 1));
+        const listCopy = [...existingInSec];
+        listCopy.splice(insertIdx, 0, { id: sentenceId } as SavedSentence);
+        listCopy.forEach((s, idx) => {
+          if (s.id === sentenceId) currentSentenceOrder = idx + 1;
+          newOrderedList.push({ id: s.id, orderIndex: idx + 1 });
+        });
+      } else {
+        // Bottom (append to the end)
+        currentSentenceOrder = existingInSec.length + 1;
+        existingInSec.forEach((s, idx) => {
+          newOrderedList.push({ id: s.id, orderIndex: idx + 1 });
+        });
+        newOrderedList.push({ id: sentenceId, orderIndex: currentSentenceOrder });
+      }
+
+      // Batch update in Firestore
+      const updatePromises = newOrderedList.map(item => {
+        if (item.id === sentenceId) {
+          return updateDoc(doc(db, 'saved_sentences', item.id), {
+            categoryId: categoryId,
+            sectionId: sectionId,
+            orderIndex: item.orderIndex
+          });
+        } else {
+          return updateDoc(doc(db, 'saved_sentences', item.id), {
+            orderIndex: item.orderIndex
+          });
+        }
+      });
+
+      await Promise.all(updatePromises);
+
+      setSavedSentences(prev => prev.map(s => {
+        const updatedItem = newOrderedList.find(item => item.id === s.id);
+        if (updatedItem) {
+          return {
+            ...s,
+            ...(s.id === sentenceId ? { categoryId, sectionId } : {}),
+            orderIndex: updatedItem.orderIndex
+          };
+        }
+        return s;
+      }));
+
+      if (result && 'id' in result && (result as SavedSentence).id === sentenceId) {
+        setResult(prev => prev ? { ...prev, categoryId, sectionId, orderIndex: currentSentenceOrder } as SavedSentence : null);
+      }
+    } catch (err) {
+      handleFirestoreError(err, OperationType.UPDATE, 'saved_sentences');
+    }
+  };
+
+  const handleReorderSectionSentences = async (sectionId: string, orderedSentenceIds: string[]) => {
+    try {
+      const updatePromises = orderedSentenceIds.map((id, index) => 
+        updateDoc(doc(db, 'saved_sentences', id), {
+          orderIndex: index + 1
+        })
+      );
+      await Promise.all(updatePromises);
+
+      setSavedSentences(prev => prev.map(s => {
+        const newIndex = orderedSentenceIds.indexOf(s.id);
+        if (newIndex !== -1) {
+          return { ...s, orderIndex: newIndex + 1 };
+        }
+        return s;
+      }));
+
+      if (result && 'id' in result) {
+        const resId = (result as SavedSentence).id;
+        const newIndex = orderedSentenceIds.indexOf(resId);
+        if (newIndex !== -1) {
+          setResult(prev => prev ? { ...prev, orderIndex: newIndex + 1 } as SavedSentence : null);
+        }
+      }
+    } catch (err) {
+      handleFirestoreError(err, OperationType.UPDATE, 'saved_sentences');
+    }
+  };
+
+  const handleCreateSectionDirect = async (name: string, categoryId: string): Promise<string | null> => {
+    if (!user || !name.trim()) return null;
+    try {
+      const docRef = await addDoc(collection(db, 'sections'), {
+        name: name.trim(),
+        categoryId: categoryId,
+        userId: user.uid,
+        createdAt: serverTimestamp()
+      });
+      return docRef.id;
+    } catch (err) {
+      handleFirestoreError(err, OperationType.CREATE, 'sections');
+      return null;
     }
   };
 
@@ -1518,7 +1711,7 @@ export default function App() {
 
   const finalFilteredSentences = selectedFilterSection === 'all'
     ? filteredSentences
-    : filteredSentences.filter(s => s.sectionId === selectedFilterSection);
+    : sortSectionSentences(filteredSentences.filter(s => s.sectionId === selectedFilterSection));
 
   // Group sentences by section for display in history if "All sections" is selected but a Category is filtered
   const sentencesBySection: { [key: string]: SavedSentence[] } = {};
@@ -1756,129 +1949,17 @@ export default function App() {
         {activeView === 'home' ? (
           /* HOME: Library View */
           <div className="space-y-4 md:space-y-8">
-            {/* Desktop Library Header */}
-            <div className="hidden md:flex flex-col lg:flex-row lg:items-center justify-between gap-6 bg-white p-6 md:p-8 rounded-[2rem] shadow-sm border border-slate-100">
-               <div className="space-y-1">
-                 <h1 className="text-2xl md:text-3xl font-black text-slate-800 tracking-tight flex items-center gap-3">
-                   <Library className="text-primary" size={28} /> Thư viện của tôi
-                 </h1>
-                 <p className="text-slate-500 text-sm md:text-base font-medium">Khám phá các chủ đề đã lưu và củng cố kiến thức của bạn.</p>
-               </div>
-
-               <div className="flex flex-wrap gap-2 max-w-full overflow-hidden">
-                  <button 
-                    onClick={() => { setSelectedFilterCategory('all'); setSelectedFilterSection('all'); }}
-                    className={`px-4 py-2 md:px-5 md:py-2.5 rounded-xl md:rounded-2xl text-[9px] md:text-[10px] font-black uppercase tracking-widest transition-all
-                      ${selectedFilterCategory === 'all' ? 'bg-primary text-white shadow-lg shadow-emerald-100' : 'bg-slate-50 text-slate-500 hover:bg-slate-100'}
-                    `}
-                  >
-                    Tất cả
-                  </button>
-                  {categories.map(c => (
-                    <button 
-                      key={c.id}
-                      onClick={() => { setSelectedFilterCategory(c.id); setSelectedFilterSection('all'); }}
-                      className={`px-4 py-2 md:px-5 md:py-2.5 rounded-xl md:rounded-2xl text-[9px] md:text-[10px] font-black uppercase tracking-widest transition-all
-                        ${selectedFilterCategory === c.id ? 'bg-primary text-white shadow-lg shadow-emerald-100' : 'bg-slate-50 text-slate-500 hover:bg-slate-100'}
-                      `}
-                    >
-                      {c.name}
-                    </button>
-                  ))}
-               </div>
-            </div>
-
-            {/* Mobile Compact Library Header & Navigation */}
-            <div className="block md:hidden bg-white p-3 md:p-4 rounded-2xl border border-slate-100 shadow-sm space-y-3">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-black text-slate-800 flex items-center gap-1.5">
-                  <Library className="text-primary animate-pulse" size={15} /> Thư viện của tôi
-                </span>
-                <span className="text-[9px] font-bold text-slate-400 bg-slate-50 px-1.5 py-0.5 rounded border border-slate-100">
-                  {categories.length} chủ đề
-                </span>
-              </div>
-
-              {/* Scrollable category list */}
-              <div className="flex gap-1.5 overflow-x-auto pb-0.5 scrollbar-none snap-x -mx-3 px-3">
-                <button 
-                  onClick={() => { setSelectedFilterCategory('all'); setSelectedFilterSection('all'); }}
-                  className={`px-3 py-1.5 rounded-xl text-[9px] font-black uppercase tracking-wider shrink-0 transition-all duration-150 cursor-pointer snap-start
-                    ${selectedFilterCategory === 'all' 
-                      ? 'bg-primary text-white shadow-sm font-black' 
-                      : 'bg-slate-50 text-slate-500 border border-slate-100/30'}
-                  `}
-                >
-                  Tất cả
-                </button>
-                {categories.map(c => (
-                  <button 
-                    key={c.id}
-                    onClick={() => { setSelectedFilterCategory(c.id); setSelectedFilterSection('all'); }}
-                    className={`px-3 py-1.5 rounded-xl text-[9px] font-black uppercase tracking-wider shrink-0 transition-all duration-150 cursor-pointer snap-start
-                      ${selectedFilterCategory === c.id 
-                        ? 'bg-primary text-white shadow-sm font-black' 
-                        : 'bg-slate-50 text-slate-500 border border-slate-100/30'}
-                    `}
-                  >
-                    {c.name}
-                  </button>
-                ))}
-              </div>
-
-              {/* Sub-sections scroll for Mobile */}
-              {selectedFilterCategory !== 'all' && (
-                <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5 scrollbar-none -mx-3 px-3 pt-2.5 border-t border-slate-100/50">
-                  <button 
-                    onClick={() => setSelectedFilterSection('all')}
-                    className={`whitespace-nowrap px-2.5 py-1 rounded-lg text-[9px] font-black uppercase tracking-wide transition-all cursor-pointer
-                      ${selectedFilterSection === 'all' 
-                        ? 'bg-indigo-600 text-white shadow-sm' 
-                        : 'bg-indigo-50 text-indigo-550'}
-                    `}
-                  >
-                    Tất cả đoạn
-                  </button>
-                  {sections.filter(s => s.categoryId === selectedFilterCategory).map(s => (
-                    <button 
-                      key={s.id}
-                      onClick={() => setSelectedFilterSection(s.id)}
-                      className={`whitespace-nowrap px-2.5 py-1 rounded-lg text-[9px] font-black uppercase tracking-wide transition-all cursor-pointer
-                        ${selectedFilterSection === s.id 
-                          ? 'bg-indigo-600 text-white shadow-sm' 
-                          : 'bg-white text-indigo-400 border border-indigo-100/20'}
-                      `}
-                    >
-                      {s.name}
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-
-            {selectedFilterCategory !== 'all' && (
-              <div className="hidden md:flex items-center gap-2 overflow-x-auto pb-2 custom-scrollbar">
-                <button 
-                  onClick={() => setSelectedFilterSection('all')}
-                  className={`whitespace-nowrap px-4 py-2 rounded-xl text-xs font-bold transition-all
-                    ${selectedFilterSection === 'all' ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-100' : 'bg-indigo-50 text-indigo-400 hover:bg-indigo-100'}
-                  `}
-                >
-                  Tất cả đoạn
-                </button>
-                {sections.filter(s => s.categoryId === selectedFilterCategory).map(s => (
-                  <button 
-                    key={s.id}
-                    onClick={() => setSelectedFilterSection(s.id)}
-                    className={`whitespace-nowrap px-4 py-2 rounded-xl text-xs font-bold transition-all
-                      ${selectedFilterSection === s.id ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-100' : 'bg-white text-indigo-400 border border-indigo-100 hover:bg-indigo-50'}
-                    `}
-                  >
-                    {s.name}
-                  </button>
-                ))}
-              </div>
-            )}
+            {/* Modular Sentence & Section Filter Bar */}
+            <SentenceFilterBar
+              categories={categories}
+              sections={sections}
+              selectedCategory={selectedFilterCategory}
+              setSelectedCategory={setSelectedFilterCategory}
+              selectedSection={selectedFilterSection}
+              setSelectedSection={setSelectedFilterSection}
+              totalSentenceCount={savedSentences.length}
+              onOpenReorderModal={(sec) => setReorderSectionTarget(sec)}
+            />
 
             <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
               {finalFilteredSentences.length > 0 ? (
@@ -1909,9 +1990,18 @@ export default function App() {
                                </span>
                              );
                            })()}
-                           <span className="text-[8px] font-black text-slate-400 uppercase tracking-wider bg-slate-50 border border-slate-100 px-2 py-1 rounded">
-                             {sections.find(s => s.id === sentence.sectionId)?.name || 'Mặc định'}
-                           </span>
+                           <button
+                             type="button"
+                             onClick={(e) => {
+                               e.stopPropagation();
+                               setAssignSentenceTarget(sentence);
+                             }}
+                             className="text-[8px] font-black text-indigo-700 hover:text-indigo-900 uppercase tracking-wider bg-indigo-50/90 hover:bg-indigo-100 border border-indigo-200/80 px-2 py-1 rounded flex items-center gap-1 cursor-pointer transition-all hover:scale-105 shadow-xs"
+                             title="Nhấp để gán câu này vào một đoạn văn bất kỳ (ví dụ: Mẹ tôi nấu ăn)"
+                           >
+                             <FolderPlus size={10} className="text-indigo-600" />
+                             <span>{sections.find(s => s.id === sentence.sectionId)?.name || 'Gán đoạn'}</span>
+                           </button>
                          </div>
                       </div>
                       <div className="flex-1">
@@ -1974,780 +2064,33 @@ export default function App() {
             </div>
           </div>
         ) : activeView === 'learn' ? (
-          /* LEARN View */
-          <div className="space-y-6 animate-in fade-in duration-300">
-            {/* Elegant Header with Settings Trigger */}
-            <div className={`bg-white p-6 rounded-[2rem] border border-slate-100 shadow-sm flex-col sm:flex-row sm:items-center justify-between gap-4 animate-in fade-in duration-300 ${result ? 'hidden md:flex' : 'flex'}`}>
-              <div className="space-y-1">
-                <h1 className="text-xl md:text-2xl font-black text-slate-800 tracking-tight flex items-center gap-2">
-                  <BookOpen className="text-emerald-500 shrink-0" size={24} /> Học tập chuyên sâu
-                </h1>
-                <p className="text-xs text-slate-400 font-semibold uppercase tracking-wider flex items-center flex-wrap gap-2">
-                  <span>Chủ đề: <strong className="text-emerald-600">{learnSelectedCategory === 'all' ? 'Tất cả chủ đề' : (categories.find(c => c.id === learnSelectedCategory)?.name || 'Chung')}</strong></span>
-                  <span className="text-slate-300">•</span>
-                  <span>Mức độ: <strong className="text-amber-600">{
-                    learnSelectedDifficulty === 'all' ? 'Tất cả mức độ' :
-                    learnSelectedDifficulty === 'basic' ? '⭐ Cơ bản' :
-                    learnSelectedDifficulty === 'easy' ? '⭐⭐ Dễ' :
-                    learnSelectedDifficulty === 'medium' ? '⭐⭐⭐ Trung bình' : '⭐⭐⭐⭐ Khó'
-                  }</strong></span>
-                </p>
-              </div>
-              <button
-                onClick={() => setIsLearnSettingsOpen(true)}
-                className="flex items-center justify-center gap-2 px-5 py-3 bg-emerald-55 text-emerald-700 font-bold rounded-2xl hover:bg-emerald-100 transition-all border border-emerald-100/50 text-xs uppercase tracking-wider cursor-pointer shadow-sm active:scale-95 shrink-0"
-              >
-                <SlidersHorizontal size={14} /> Thay đổi chủ đề / Mức độ
-              </button>
-            </div>
-
-            {/* Modal for Choose Topic & Difficulty */}
-            <AnimatePresence>
-              {isLearnSettingsOpen && (
-                <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
-                  {/* Backdrop */}
-                  <motion.div 
-                    initial={{ opacity: 0 }}
-                    animate={{ opacity: 1 }}
-                    exit={{ opacity: 0 }}
-                    onClick={() => setIsLearnSettingsOpen(false)}
-                    className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm"
-                  />
-                  
-                  {/* Modal Card */}
-                  <motion.div 
-                    initial={{ opacity: 0, scale: 0.95, y: 15 }}
-                    animate={{ opacity: 1, scale: 1, y: 0 }}
-                    exit={{ opacity: 0, scale: 0.95, y: 15 }}
-                    transition={{ type: "spring", duration: 0.4 }}
-                    className="relative bg-white rounded-[2.5rem] border border-slate-100 shadow-2xl w-full max-w-2xl overflow-hidden z-10 flex flex-col max-h-[85vh]"
-                  >
-                    {/* Header */}
-                    <div className="p-6 md:p-8 border-b border-slate-100 flex items-center justify-between shrink-0">
-                      <div className="space-y-1">
-                        <span className="text-[10px] font-black text-emerald-600 bg-emerald-50 px-3 py-1 rounded-full uppercase tracking-widest">
-                          Cấu hình học tập
-                        </span>
-                        <h2 className="text-xl font-bold text-slate-800">Chọn chủ đề & Mức độ khó</h2>
-                      </div>
-                      <button 
-                        onClick={() => setIsLearnSettingsOpen(false)}
-                        className="p-2.5 bg-slate-50 text-slate-400 hover:text-slate-600 hover:bg-slate-150 rounded-full transition-all cursor-pointer"
-                      >
-                        <X size={18} />
-                      </button>
-                    </div>
-
-                    {/* Content */}
-                    <div className="p-6 md:p-8 overflow-y-auto space-y-6 flex-1 custom-scrollbar">
-                      {/* Topic Selector Block */}
-                      <div className="space-y-3">
-                        <span className="text-xs font-black text-slate-500 uppercase tracking-wider flex items-center gap-1.5">
-                          <Sparkles size={14} className="text-emerald-500 animate-pulse" /> 
-                          Chọn chủ đề học:
-                        </span>
-                        
-                        <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-                          <button
-                            onClick={() => {
-                              setLearnSelectedCategory('all');
-                              const filtered = savedSentences.filter(s => learnSelectedDifficulty === 'all' || (s.difficulty || 'basic') === learnSelectedDifficulty);
-                              if (result) {
-                                if (filtered.length > 0) {
-                                  setResult(filtered[0]);
-                                } else {
-                                  setResult(null);
-                                }
-                              }
-                            }}
-                            className={`px-4 py-3 rounded-2xl text-xs font-bold transition-all duration-200 cursor-pointer text-left ${
-                              learnSelectedCategory === 'all'
-                                ? 'bg-emerald-600 text-white shadow-md shadow-emerald-100/50'
-                                : 'bg-slate-50 text-slate-500 hover:bg-slate-100 hover:text-slate-700 border border-transparent hover:border-slate-200'
-                            }`}
-                          >
-                            <span className="block font-black truncate">Tất cả chủ đề</span>
-                            <span className="text-[10px] opacity-80 mt-0.5 block font-medium">({savedSentences.length} câu)</span>
-                          </button>
-                          {categories.map((c) => {
-                            const count = savedSentences.filter(s => s.categoryId === c.id).length;
-                            return (
-                              <button
-                                key={c.id}
-                                onClick={() => {
-                                  setLearnSelectedCategory(c.id);
-                                  const filtered = savedSentences.filter((s) => s.categoryId === c.id && (learnSelectedDifficulty === 'all' || (s.difficulty || 'basic') === learnSelectedDifficulty));
-                                  if (result) {
-                                    if (filtered.length > 0) {
-                                      setResult(filtered[0]);
-                                    } else {
-                                      setResult(null);
-                                    }
-                                  }
-                                }}
-                                className={`px-4 py-3 rounded-2xl text-xs font-bold transition-all duration-200 cursor-pointer text-left ${
-                                  learnSelectedCategory === c.id
-                                    ? 'bg-emerald-600 text-white shadow-md shadow-emerald-100/50'
-                                    : 'bg-slate-50 text-slate-500 hover:bg-slate-100 hover:text-slate-705 border border-transparent hover:border-slate-200'
-                                }`}
-                              >
-                                <span className="block font-black truncate">{c.name}</span>
-                                <span className="text-[10px] opacity-80 mt-0.5 block font-medium">({count} câu)</span>
-                              </button>
-                            );
-                          })}
-                        </div>
-                      </div>
-
-                      {/* Difficulty Selector Block */}
-                      <div className="space-y-3 pt-4 border-t border-slate-100">
-                        <span className="text-xs font-black text-slate-500 uppercase tracking-wider flex items-center gap-1.5 flex-wrap">
-                          <Zap size={14} className="text-amber-500" />
-                          Chọn mức độ khó:
-                        </span>
-                        <div className="grid grid-cols-2 gap-2">
-                          {[
-                            { id: 'all', label: 'Tất cả mức độ' },
-                            { id: 'basic', label: '⭐ Cơ bản' },
-                            { id: 'easy', label: '⭐⭐ Dễ' },
-                            { id: 'medium', label: '⭐⭐⭐ Trung bình' },
-                            { id: 'hard', label: '⭐⭐⭐⭐ Khó' }
-                          ].map((diff) => {
-                            const count = savedSentences.filter(s => {
-                              const matchesCategory = learnSelectedCategory === 'all' || s.categoryId === learnSelectedCategory;
-                              const sDiff = s.difficulty || 'basic';
-                              return matchesCategory && (diff.id === 'all' || sDiff === diff.id);
-                            }).length;
-                            
-                            return (
-                              <button
-                                key={diff.id}
-                                onClick={() => {
-                                  setLearnSelectedDifficulty(diff.id);
-                                  const filtered = savedSentences.filter(s => {
-                                    const matchesCategory = learnSelectedCategory === 'all' || s.categoryId === learnSelectedCategory;
-                                    const sDiff = s.difficulty || 'basic';
-                                    const matchesDiff = diff.id === 'all' || sDiff === diff.id;
-                                    return matchesCategory && matchesDiff;
-                                  });
-                                  if (result) {
-                                    if (filtered.length > 0) {
-                                      setResult(filtered[0]);
-                                    } else {
-                                      setResult(null);
-                                    }
-                                  }
-                                }}
-                                className={`px-4 py-3 rounded-2xl text-xs font-bold transition-all duration-200 cursor-pointer text-left flex justify-between items-center ${
-                                  learnSelectedDifficulty === diff.id
-                                    ? 'bg-amber-500 text-white shadow-md shadow-amber-100'
-                                    : 'bg-slate-50 text-slate-500 hover:bg-slate-100 hover:text-slate-700 border border-transparent hover:border-slate-200'
-                                }`}
-                              >
-                                <span className="font-black">{diff.label}</span>
-                                <span className="text-[10px] opacity-80 font-medium">({count} câu)</span>
-                              </button>
-                            );
-                          })}
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Footer */}
-                    <div className="p-6 md:p-8 bg-slate-50 border-t border-slate-100 flex justify-end shrink-0">
-                      <button 
-                        onClick={() => setIsLearnSettingsOpen(false)}
-                        className="px-6 py-2.5 bg-emerald-600 text-white text-sm font-bold rounded-2xl hover:bg-emerald-700 active:scale-95 transition-all shadow-lg shadow-emerald-100 cursor-pointer"
-                      >
-                        Xác nhận và Học ngay
-                      </button>
-                    </div>
-                  </motion.div>
-                </div>
-              )}
-            </AnimatePresence>
-
-            {!result ? (
-              <div className="text-center py-20 bg-white rounded-[3rem] border border-slate-100 shadow-sm max-w-2xl mx-auto px-6">
-                <div className="w-20 h-20 bg-emerald-50 rounded-full flex items-center justify-center mx-auto mb-6 text-emerald-500">
-                  <BookOpen size={40} />
-                </div>
-                <h3 className="text-2xl font-black text-slate-800 mb-2">Chưa chọn bài học</h3>
-                <p className="text-slate-500 mb-8 font-medium">Chọn một câu từ danh sách bài học dưới đây để bắt đầu phân tích chi tiết:</p>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-left max-h-[350px] overflow-y-auto p-2 rounded-2xl bg-slate-50 border border-slate-100">
-                  {savedSentences
-                    .filter(s => {
-                      const matchesCategory = learnSelectedCategory === 'all' ? true : s.categoryId === learnSelectedCategory;
-                      const matchesDiff = learnSelectedDifficulty === 'all' ? true : (s.difficulty || 'basic') === learnSelectedDifficulty;
-                      return matchesCategory && matchesDiff;
-                    })
-                    .map(s => (
-                      <div 
-                        key={s.id}
-                        onClick={() => setResult(s)}
-                        className="p-4 bg-white rounded-2xl border border-slate-100 hover:border-emerald-500 hover:shadow-md cursor-pointer transition-all flex flex-col justify-between"
-                      >
-                        <div>
-                          <div className="flex items-center gap-1.5 mb-1 justify-between">
-                            <p className="font-bold text-slate-800 text-base truncate tracking-[0.08em] flex-1">{renderHighlightedChinese(s.chinese, s.id)}</p>
-                            {(() => {
-                              const diff = getDifficultyTranslation(s.difficulty);
-                              return (
-                                <span className={`px-1.5 py-0.5 rounded text-[8px] font-black border ${diff.color} shrink-0`}>
-                                  {diff.label}
-                                </span>
-                              );
-                            })()}
-                          </div>
-                          <p className="text-xs text-slate-400 truncate">{s.meaning}</p>
-                        </div>
-                      </div>
-                    ))}
-                  {savedSentences.filter(s => {
-                    const matchesCategory = learnSelectedCategory === 'all' ? true : s.categoryId === learnSelectedCategory;
-                    const matchesDiff = learnSelectedDifficulty === 'all' ? true : (s.difficulty || 'basic') === learnSelectedDifficulty;
-                    return matchesCategory && matchesDiff;
-                  }).length === 0 && (
-                    <p className="col-span-full text-center text-slate-400 py-6 text-sm">Chưa có bài học nào được tạo trong chủ đề và mức độ khó này.</p>
-                  )}
-                </div>
-              </div>
-            ) : (
-              <div className="space-y-6 animate-in fade-in duration-300">
-                {(() => {
-                  const learnSentences = savedSentences.filter(s => {
-                    const matchesCategory = learnSelectedCategory === 'all' ? true : s.categoryId === learnSelectedCategory;
-                    const matchesDiff = learnSelectedDifficulty === 'all' ? true : (s.difficulty || 'basic') === learnSelectedDifficulty;
-                    return matchesCategory && matchesDiff;
-                  });
-                  const currentIndex = learnSentences.findIndex(s => s.id === (result as SavedSentence).id);
-                  const currentNo = currentIndex !== -1 ? currentIndex + 1 : 0;
-                  const totalCount = learnSentences.length;
-                  
-                  return (
-                    <>
-                      <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
-                  {/* Left Column: Chữ tiếng Trung, Pinyin, và Dịch nghĩa */}
-                  <div className="lg:col-span-6 space-y-6 lg:sticky lg:top-24">
-                    <div className="sleek-card bg-white relative overflow-hidden transition-all shadow-md">
-                      <div className="absolute top-0 right-0 w-32 h-32 bg-primary/5 rounded-full -mr-16 -mt-16"></div>
-                      <div className="flex items-center justify-between gap-2 mb-3 border-b border-slate-50 pb-2">
-                        <span className="text-[10px] font-black text-emerald-600 bg-emerald-50 px-2.5 py-0.5 rounded-full uppercase tracking-tighter shrink-0">
-                          Văn bản học tập
-                        </span>
-                        
-                        <div className="flex items-center gap-1 bg-slate-50 p-1 rounded-xl border border-slate-100 shrink-0">
-                          {/* Speak Buttons */}
-                          <button 
-                            onClick={() => handleSpeak(result.chinese, false)} 
-                            title="Nghe tốc độ thường (1.0x)"
-                            className="p-1 bg-white text-primary rounded-lg hover:bg-primary/5 shadow-sm transition-colors flex items-center justify-center h-7 w-7 cursor-pointer"
-                          >
-                            <Volume2 size={15}/>
-                          </button>
-                          <button 
-                            onClick={() => handleSpeak(result.chinese, true)} 
-                            title="Nghe tốc độ chậm (0.5x)"
-                            className="p-1 bg-white text-amber-600 rounded-lg hover:bg-amber-50 shadow-sm transition-colors flex items-center justify-center h-7 w-7 cursor-pointer text-xs"
-                          >
-                            🐢
-                          </button>
-
-                          <div className="w-[1px] h-3 bg-slate-200 mx-0.5"></div>
-
-                          {/* Memory Test Toggles */}
-                          <button 
-                            onClick={() => setHidePinyin(!hidePinyin)} 
-                            title={hidePinyin ? "Hiện Pinyin" : "Ẩn Pinyin"}
-                            className={`p-1 rounded-lg transition-colors flex items-center justify-center h-7 w-7 cursor-pointer ${hidePinyin ? 'bg-amber-100 text-amber-700' : 'bg-white text-slate-500 hover:bg-slate-100'}`}
-                          >
-                            {hidePinyin ? <EyeOff size={14}/> : <Eye size={14}/>}
-                          </button>
-                          <button 
-                            onClick={() => setHideMeaning(!hideMeaning)} 
-                            title={hideMeaning ? "Hiện Dịch nghĩa" : "Ẩn Dịch nghĩa"}
-                            className={`p-1 rounded-lg transition-colors flex items-center justify-center h-7 w-7 cursor-pointer ${hideMeaning ? 'bg-emerald-100 text-emerald-700' : 'bg-white text-slate-500 hover:bg-slate-100'}`}
-                          >
-                            {hideMeaning ? <EyeOff size={14}/> : <Eye size={14}/>}
-                          </button>
-                        </div>
-                      </div>
-                      
-                      {/* Dynamic Realism Illustration Card */}
-                      {result.illustrationSvg ? (
-                        <div className="w-full flex flex-col items-center justify-center mb-4">
-                          <div className="relative group">
-                            <div 
-                              onClick={() => setSelectedIllustrationModal(result)}
-                              className="w-28 h-28 sm:w-36 sm:h-36 md:w-44 md:h-44 rounded-2xl overflow-hidden bg-slate-50 border border-slate-200/80 shadow-md flex items-center justify-center relative cursor-zoom-in transition-all duration-300 hover:shadow-xl hover:scale-[1.02]"
-                              title="Nhấp để phóng to tranh minh họa"
-                            >
-                              {result.illustrationSvg.startsWith('data:image/') || result.illustrationSvg.startsWith('http') ? (
-                                <img 
-                                  src={result.illustrationSvg} 
-                                  alt={result.chinese} 
-                                  referrerPolicy="no-referrer" 
-                                  className="w-full h-full object-cover"
-                                />
-                              ) : (
-                                <div 
-                                  className="w-full h-full flex items-center justify-center p-2 [&>svg]:w-full [&>svg]:h-full [&>svg]:object-contain"
-                                  dangerouslySetInnerHTML={{ __html: result.illustrationSvg }}
-                                />
-                              )}
-                              
-                              {/* Overlay zoom badge */}
-                              <div className="absolute bottom-1.5 right-1.5 bg-black/60 backdrop-blur-sm text-white px-2 py-0.5 rounded-lg text-[9px] font-bold flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                                <Maximize2 size={10} /> Phóng to
-                              </div>
-                            </div>
-                            
-                            {/* Regeneration action & style picker */}
-                            {user && 'id' in result && (
-                              <div className="flex items-center justify-center gap-1.5 mt-2">
-                                <button
-                                  onClick={() => setShowIllustrationStyleDropdown(!showIllustrationStyleDropdown)}
-                                  disabled={isGeneratingIllustration}
-                                  className="px-2.5 py-1 bg-white hover:bg-slate-50 text-slate-700 font-bold text-[10px] rounded-lg border border-slate-200 transition-all shadow-xs flex items-center gap-1 cursor-pointer disabled:opacity-50"
-                                  title="Đổi phong cách vẽ chân thực"
-                                >
-                                  <Palette size={12} className="text-indigo-500" />
-                                  <span>{
-                                    chosenIllustrationStyle === 'photorealistic' ? '📸 Chân thực' :
-                                    chosenIllustrationStyle === '3d-cinematic' ? '🎨 3D Sống động' :
-                                    chosenIllustrationStyle === 'chinese-art' ? '🖌️ Thủy mặc' : '✨ Vector chi tiết'
-                                  }</span>
-                                  <ChevronDown size={10} />
-                                </button>
-                                
-                                <button
-                                  onClick={async () => {
-                                    setIsGeneratingIllustration(true);
-                                    try {
-                                      const newArtwork = await generateRealisticIllustration(result.chinese, result.meaning, chosenIllustrationStyle);
-                                      setResult(prev => prev ? { ...prev, illustrationSvg: newArtwork } as SavedSentence : null);
-                                      if (user && 'id' in result && (result as SavedSentence).id) {
-                                        try {
-                                          await updateDoc(doc(db, 'saved_sentences', (result as SavedSentence).id), {
-                                            illustrationSvg: newArtwork
-                                          });
-                                        } catch (dbErr) {
-                                          console.error("Firestore sync error:", dbErr);
-                                        }
-                                      }
-                                    } catch (err) {
-                                      console.error("Lỗi vẽ tranh:", err);
-                                    } finally {
-                                      setIsGeneratingIllustration(false);
-                                    }
-                                  }}
-                                  disabled={isGeneratingIllustration}
-                                  className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white font-bold text-[10px] rounded-lg transition-all shadow-sm flex items-center gap-1 cursor-pointer disabled:opacity-50"
-                                >
-                                  {isGeneratingIllustration ? (
-                                    <>
-                                      <Loader2 className="animate-spin" size={12} />
-                                      <span>Đang vẽ...</span>
-                                    </>
-                                  ) : (
-                                    <>
-                                      <Sparkles size={12} />
-                                      <span>Vẽ lại chân thực</span>
-                                    </>
-                                  )}
-                                </button>
-                              </div>
-                            )}
-
-                            {/* Style selector dropdown */}
-                            <AnimatePresence>
-                              {showIllustrationStyleDropdown && (
-                                <motion.div
-                                  initial={{ opacity: 0, y: -5 }}
-                                  animate={{ opacity: 1, y: 0 }}
-                                  exit={{ opacity: 0, y: -5 }}
-                                  className="absolute left-1/2 -translate-x-1/2 mt-1 z-30 w-56 bg-white rounded-xl shadow-xl border border-slate-200 p-1.5 space-y-1"
-                                >
-                                  <p className="text-[9px] font-black text-slate-400 uppercase tracking-wider px-2 py-1">Chọn phong cách tranh AI:</p>
-                                  {[
-                                    { id: 'photorealistic' as const, label: '📸 Chân thực (Nhiếp ảnh)', desc: 'Ảnh chụp đời thực, ánh sáng sống động' },
-                                    { id: '3d-cinematic' as const, label: '🎨 3D Điện ảnh (Cinematic)', desc: 'Khối 3D sắc nét, phong cách điện ảnh' },
-                                    { id: 'chinese-art' as const, label: '🖌️ Thủy mặc Trung Hoa', desc: 'Nghệ thuật tranh thủy mặc cổ phong' },
-                                    { id: 'detailed-vector' as const, label: '✨ Vector Chi tiết Đa lớp', desc: 'Đồ họa vector ánh sáng gradient chi tiết' },
-                                  ].map(item => (
-                                    <button
-                                      key={item.id}
-                                      onClick={() => {
-                                        setChosenIllustrationStyle(item.id);
-                                        setShowIllustrationStyleDropdown(false);
-                                      }}
-                                      className={`w-full text-left px-2.5 py-1.5 rounded-lg text-xs font-bold flex flex-col transition-all cursor-pointer ${
-                                        chosenIllustrationStyle === item.id 
-                                          ? 'bg-emerald-50 text-emerald-800 border border-emerald-200' 
-                                          : 'text-slate-700 hover:bg-slate-50'
-                                      }`}
-                                    >
-                                      <span>{item.label}</span>
-                                      <span className="text-[9px] font-medium text-slate-400">{item.desc}</span>
-                                    </button>
-                                  ))}
-                                </motion.div>
-                              )}
-                            </AnimatePresence>
-                          </div>
-                        </div>
-                      ) : (
-                        user && 'id' in result && (
-                          <div className="mb-4 p-3 rounded-2xl border border-dashed border-emerald-200 bg-emerald-50/30 flex flex-col sm:flex-row items-center justify-between gap-3">
-                            {isGeneratingIllustration ? (
-                              <div className="flex items-center gap-2 py-1 mx-auto">
-                                <Loader2 className="text-emerald-500 animate-spin" size={18} />
-                                <p className="text-xs text-emerald-800 font-bold animate-pulse">Đang tạo tranh AI chân thực & sống động...</p>
-                              </div>
-                            ) : (
-                              <>
-                                <div className="flex items-center gap-2 text-left">
-                                  <div className="w-8 h-8 rounded-xl bg-emerald-100/60 flex items-center justify-center text-emerald-600 shrink-0">
-                                    <Sparkles size={16} />
-                                  </div>
-                                  <div>
-                                    <p className="text-xs font-bold text-slate-800">Tạo tranh minh họa chân thực AI</p>
-                                    <p className="text-[10px] text-slate-500 font-medium">Khắc họa bối cảnh câu văn chân thực sắc nét</p>
-                                  </div>
-                                </div>
-                                
-                                <div className="flex items-center gap-1.5 shrink-0">
-                                  <select
-                                    value={chosenIllustrationStyle}
-                                    onChange={(e) => setChosenIllustrationStyle(e.target.value as IllustrationStyle)}
-                                    className="text-[10px] font-bold py-1 px-2 rounded-lg bg-white border border-slate-200 text-slate-700 cursor-pointer"
-                                  >
-                                    <option value="photorealistic">📸 Chân thực</option>
-                                    <option value="3d-cinematic">🎨 3D Sống động</option>
-                                    <option value="chinese-art">🖌️ Thủy mặc</option>
-                                    <option value="detailed-vector">✨ Vector chi tiết</option>
-                                  </select>
-                                  
-                                  <button
-                                    onClick={async () => {
-                                      setIsGeneratingIllustration(true);
-                                      try {
-                                        const newArtwork = await generateRealisticIllustration(result.chinese, result.meaning, chosenIllustrationStyle);
-                                        setResult(prev => prev ? { ...prev, illustrationSvg: newArtwork } as SavedSentence : null);
-                                        if (user && 'id' in result && (result as SavedSentence).id) {
-                                          try {
-                                            await updateDoc(doc(db, 'saved_sentences', (result as SavedSentence).id), {
-                                              illustrationSvg: newArtwork
-                                            });
-                                          } catch (dbErr) {
-                                            console.error("Firestore sync error:", dbErr);
-                                          }
-                                        }
-                                      } catch (err) {
-                                        console.error("Lỗi vẽ tranh:", err);
-                                      } finally {
-                                        setIsGeneratingIllustration(false);
-                                      }
-                                    }}
-                                    className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white font-bold text-xs rounded-xl transition-all shadow-sm flex items-center gap-1 shrink-0 cursor-pointer border-none"
-                                  >
-                                    🎨 Tạo tranh ngay
-                                  </button>
-                                </div>
-                              </>
-                            )}
-                          </div>
-                        )
-                      )}
-
-                      <div className="mb-4 md:mb-5">
-                        <p className="text-4xl md:text-6xl font-bold text-slate-800 tracking-[0.12em] mb-2.5 md:mb-3 leading-normal break-words">{renderHighlightedChinese(result.chinese, (result as any).id)}</p>
-                        
-                        <div className="flex items-center gap-2 group/pinyin min-h-[28px]">
-                          {hidePinyin ? (
-                            <span 
-                              onClick={() => setHidePinyin(false)}
-                              className="inline-flex items-center gap-1.5 px-3 py-1 bg-amber-50 text-amber-700 hover:bg-amber-100 rounded-lg text-xs font-bold cursor-pointer select-none transition-all duration-200 border border-amber-100/60 animate-pulse"
-                              title="Nhấp để hiển thị Pinyin"
-                            >
-                              <EyeOff size={12} /> Nhấp để hiện Pinyin (Kiểm tra đọc)
-                            </span>
-                          ) : (
-                            <>
-                              <p className="text-base md:text-xl text-slate-500 font-medium italic break-words">{result.pinyin}</p>
-                              <button 
-                                onClick={() => setHidePinyin(true)}
-                                className="text-slate-300 hover:text-slate-600 transition-colors p-1 opacity-0 group-hover/pinyin:opacity-100 focus:opacity-100 cursor-pointer"
-                                title="Ẩn Pinyin"
-                              >
-                                <EyeOff size={14} />
-                              </button>
-                            </>
-                          )}
-                        </div>
-                      </div>
-
-                      <div className="space-y-3 md:space-y-4 pt-4 md:pt-5 border-t border-slate-50">
-                        <div className="flex items-center justify-between">
-                          <p className="text-[10px] md:text-xs font-black text-slate-400 uppercase tracking-widest">Dịch nghĩa</p>
-                          {!hideMeaning && (
-                            <button 
-                              onClick={() => setHideMeaning(true)}
-                              className="text-xs text-slate-400 hover:text-slate-600 transition-colors flex items-center gap-1 px-2 py-1 rounded hover:bg-slate-50 cursor-pointer"
-                              title="Ẩn dịch nghĩa tiếng Việt"
-                            >
-                              <EyeOff size={12} /> Ẩn nghĩa
-                            </button>
-                          )}
-                        </div>
-
-                        {hideMeaning ? (
-                          <div 
-                            onClick={() => setHideMeaning(false)}
-                            className="p-4 bg-emerald-50/50 hover:bg-emerald-50 rounded-2xl border border-dashed border-emerald-100 text-emerald-800 text-center cursor-pointer select-none transition-all duration-200 font-bold text-xs flex items-center justify-center gap-2 animate-pulse"
-                            title="Nhấp để hiển thị nghĩa tiếng Việt"
-                          >
-                            <EyeOff size={14} className="text-emerald-500" /> Nhấp để xem dịch nghĩa tiếng Việt (Kiểm tra nhớ)
-                          </div>
-                        ) : (
-                          <p className="text-base md:text-lg font-bold text-slate-700 leading-relaxed">{result.meaning}</p>
-                        )}
-                        {!hideMeaning && ('originalText' in result) && (
-                          <p className="text-xs md:text-sm text-slate-400 italic">Văn bản gốc: {(result as any).originalText}</p>
-                        )}
-                      </div>
-                    </div>
-
-                    {/* Ghi chú học tập / Mẫu câu thích */}
-                    <div className="sleek-card bg-gradient-to-br from-amber-50/20 to-white transition-all shadow-md border border-amber-100/50 relative overflow-hidden">
-                      <div className="absolute -top-12 -right-12 w-24 h-24 bg-amber-500/5 rounded-full"></div>
-                      <div className="flex items-center justify-between mb-4 relative z-10 w-full">
-                        <h4 className="text-xs md:text-sm font-black text-amber-800 uppercase tracking-wider flex items-center gap-1.5">
-                          <Bookmark size={15} className="text-amber-500 shrink-0" />
-                          Ghi chú & Mẫu câu học tập
-                        </h4>
-                        {!isEditingNote ? (
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setNoteText((result as SavedSentence).note || '');
-                              setIsEditingNote(true);
-                            }}
-                            className="text-[10px] md:text-xs font-black text-amber-800 hover:text-amber-950 bg-amber-100 border border-amber-200/60 px-3 py-1.5 rounded-xl transition-all cursor-pointer inline-flex items-center shrink-0"
-                          >
-                            Chỉnh sửa
-                          </button>
-                        ) : (
-                          <div className="flex gap-1.5 shrink-0">
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setIsEditingNote(false);
-                                setNoteText((result as SavedSentence).note || '');
-                              }}
-                              className="text-[10px] md:text-xs font-bold text-slate-500 hover:text-slate-700 bg-slate-100 px-2.5 py-1.5 rounded-xl transition-all cursor-pointer"
-                            >
-                              Hủy
-                            </button>
-                            <button
-                              type="button"
-                              onClick={handleSaveNote}
-                              className="text-[10px] md:text-xs font-black text-white bg-amber-600 hover:bg-amber-700 px-2.5 py-1.5 rounded-xl shadow-sm transition-all cursor-pointer"
-                            >
-                              Lưu lại
-                            </button>
-                          </div>
-                        )}
-                      </div>
-
-                      {isEditingNote ? (
-                        <div className="space-y-3 relative z-10">
-                          <textarea
-                            value={noteText}
-                            onChange={(e) => setNoteText(e.target.value)}
-                            rows={3}
-                            placeholder="Nhập ghi chú bằng tiếng Việt: ví dụ mẫu câu thích, từ vựng hay cấu trúc ngữ pháp dùng trong câu này..."
-                            className="w-full text-sm font-medium p-3.5 border border-amber-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 text-slate-700 leading-relaxed bg-white/70"
-                          />
-                        </div>
-                      ) : (
-                        <div className="text-sm font-medium text-slate-600 leading-relaxed min-h-[50px] flex flex-col justify-center relative z-10 w-full text-left">
-                          {(result as SavedSentence).note ? (
-                            <p className="whitespace-pre-line text-slate-700">{(result as SavedSentence).note}</p>
-                          ) : (
-                            <p className="text-slate-400 italic text-[11px] text-center py-2">Bạn chưa thêm ghi chú nào. Hãy nhấp "Chỉnh sửa" để tự do lưu lại các mẫu câu yêu thích hoặc cách dùng của cụm từ này bằng tiếng Việt nhé!</p>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  </div>
-
-                  {/* Right Column: Phân tích ngữ pháp và các câu phát triển */}
-                  <div className="lg:col-span-6 space-y-6">
-                    <div className="sleek-card bg-white transition-all shadow-md">
-                      <div className="flex items-center justify-between mb-6">
-                        <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2">
-                          <BookOpen className="text-primary" /> Phân tích Bài học
-                        </h3>
-                        {!isEditingExplanation ? (
-                          <button
-                            onClick={() => {
-                              setEditableExplanation(result.grammarExplanation);
-                              setIsEditingExplanation(true);
-                            }}
-                            className="text-xs font-bold text-indigo-600 hover:text-indigo-800 bg-indigo-50 hover:bg-indigo-100 px-3 py-1.5 rounded-xl transition-all"
-                          >
-                            Sửa nhanh
-                          </button>
-                        ) : (
-                          <div className="flex gap-2">
-                            <button
-                              onClick={() => setIsEditingExplanation(false)}
-                              className="text-xs font-bold text-slate-500 hover:text-slate-700 bg-slate-100 hover:bg-slate-200 px-3 py-1.5 rounded-xl transition-all"
-                            >
-                              Hủy
-                            </button>
-                            <button
-                              onClick={handleSaveExplanation}
-                              className="text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 px-3 py-1.5 rounded-xl shadow-sm transition-all"
-                            >
-                              Lưu lại
-                            </button>
-                          </div>
-                        )}
-                      </div>
-
-                      {isEditingExplanation ? (
-                        <div className="space-y-4">
-                          {/* Formatting toolbar helper */}
-                          <div className="flex flex-wrap gap-1.5 p-2 bg-slate-50 rounded-xl border border-slate-100">
-                            <button
-                              type="button"
-                              onClick={() => setEditableExplanation(prev => prev + ' **văn bản in đậm**')}
-                              className="text-[11px] font-extrabold px-2.5 py-1 bg-white hover:bg-slate-100 text-slate-700 rounded-lg border border-slate-200 transition-colors"
-                            >
-                              In đậm (**)
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => setEditableExplanation(prev => prev + ' *in nghiêng*')}
-                              className="text-[11px] font-bold italic px-2.5 py-1 bg-white hover:bg-slate-100 text-slate-700 rounded-lg border border-slate-200 transition-colors"
-                            >
-                              Nghiêng (*)
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => setEditableExplanation(prev => prev + '\n\n• ')}
-                              className="text-[11px] font-bold px-2.5 py-1 bg-white hover:bg-slate-100 text-slate-700 rounded-lg border border-slate-200 transition-colors"
-                            >
-                              + Đầu dòng (•)
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => setEditableExplanation(prev => prev + '\n')}
-                              className="text-[11px] font-bold px-2.5 py-1 bg-white hover:bg-slate-100 text-slate-700 rounded-lg border border-slate-200 transition-colors"
-                            >
-                              Xuống dòng (Enter)
-                            </button>
-                          </div>
-
-                          <textarea
-                            value={editableExplanation}
-                            onChange={(e) => setEditableExplanation(e.target.value)}
-                            rows={12}
-                            placeholder="Nhập phần phân tích ngữ pháp hoặc giải thích chi tiết..."
-                            className="w-full text-sm font-medium p-4 border border-slate-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary font-mono text-slate-700 leading-relaxed"
-                          />
-                        </div>
-                      ) : (
-                        <div className="markdown-body">
-                          <ReactMarkdown>{result.grammarExplanation}</ReactMarkdown>
-                        </div>
-                      )}
-                    </div>
-
-                    {result.variations && result.variations.length > 0 && (
-                      <div className="sleek-card bg-gradient-to-br from-indigo-50/50 to-white transition-all shadow-md">
-                        <h3 className="text-lg font-bold text-slate-800 mb-6 flex items-center gap-2">
-                          <Sparkles className="text-indigo-600" /> Câu phát triển bổ sung
-                        </h3>
-                        <div className="space-y-4">
-                          {result.variations.map((v, idx) => (
-                            <div key={idx} className="p-5 bg-white rounded-2xl border border-indigo-100/50 hover:border-indigo-300 transition-all group">
-                              <div className="flex justify-between items-start mb-2">
-                                <p className="text-xl font-bold text-slate-800 group-hover:text-indigo-600 transition-colors tracking-[0.1em]">{v.chinese}</p>
-                                <div className="flex items-center gap-2">
-                                  <button onClick={() => handleSpeak(v.chinese, false)} title="Nghe thường" className="text-indigo-300 hover:text-indigo-600 transition-colors p-1 cursor-pointer">
-                                    <Volume2 size={16} />
-                                  </button>
-                                  <button onClick={() => handleSpeak(v.chinese, true)} title="Nghe chậm" className="text-amber-500 hover:text-amber-600 transition-colors p-1 flex items-center gap-0.5 text-xs font-bold cursor-pointer">
-                                    🐢 <span className="text-[9px] font-black">0.5x</span>
-                                  </button>
-                                </div>
-                              </div>
-                              <p className="text-sm text-slate-400 italic mb-2">{v.pinyin}</p>
-                              <p className="text-sm text-slate-600 font-medium">{v.meaning}</p>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                </div>
-
-                {/* Floating Bottom Pagination Panel */}
-                <div className="fixed bottom-20 lg:bottom-8 left-1/2 -translate-x-1/2 z-40 bg-white/95 backdrop-blur-md border border-slate-200/80 shadow-2xl px-8 sm:px-12 py-3 rounded-full flex items-center gap-4 sm:gap-8 animate-in fade-in slide-in-from-bottom-5 duration-300">
-                  <button 
-                    onClick={() => {
-                      setResult(null);
-                      window.scrollTo({ top: 0, behavior: 'smooth' });
-                    }}
-                    title="Quay lại danh sách"
-                    className="p-2 sm:p-3 text-slate-500 hover:text-slate-800 bg-slate-100 hover:bg-slate-200 rounded-full transition-all cursor-pointer flex items-center justify-center shrink-0"
-                  >
-                    <List size={14} className="sm:w-4 sm:h-4" />
-                  </button>
-                  
-                  <div className="w-px h-4 sm:h-5 bg-slate-200 shrink-0" />
-                  
-                  <button
-                    onClick={() => {
-                      if (totalCount === 0) return;
-                      const prevIndex = (currentIndex - 1 + totalCount) % totalCount;
-                      setResult(learnSentences[prevIndex]);
-                      window.scrollTo({ top: 0, behavior: 'smooth' });
-                    }}
-                    disabled={totalCount <= 1}
-                    className="flex items-center gap-1.5 px-4.5 sm:px-6.5 py-2 text-[10px] sm:text-xs font-black uppercase tracking-wide text-emerald-700 bg-emerald-50 hover:bg-emerald-600 hover:text-white disabled:opacity-40 disabled:pointer-events-none rounded-full transition-all duration-200 border border-emerald-100/50 cursor-pointer shrink-0"
-                  >
-                    ← Trước
-                  </button>
-                  
-                  <div className="flex items-center gap-0.5 sm:gap-1 font-extrabold text-[10px] sm:text-xs text-slate-400 bg-slate-50/50 px-2.5 sm:px-3.5 py-1 rounded-full border border-slate-100 min-w-[45px] sm:min-w-[60px] justify-center shrink-0">
-                    <span className="text-slate-800">{currentNo}</span>
-                    <span className="text-slate-200">/</span>
-                    <span>{totalCount}</span>
-                  </div>
-                  
-                  <button
-                    onClick={() => {
-                      if (totalCount === 0) return;
-                      const nextIndex = (currentIndex + 1) % totalCount;
-                      setResult(learnSentences[nextIndex]);
-                      window.scrollTo({ top: 0, behavior: 'smooth' });
-                    }}
-                    disabled={totalCount <= 1}
-                    className="flex items-center gap-1.5 px-5 sm:px-7.5 py-2 text-[10px] sm:text-xs font-black uppercase tracking-wide text-white bg-emerald-600 hover:bg-emerald-700 disabled:opacity-40 disabled:pointer-events-none rounded-full transition-all duration-200 shadow-md shadow-emerald-100/50 cursor-pointer shrink-0"
-                  >
-                    Tiếp →
-                  </button>
-                </div>
-              </>
-            );
-          })()}
-        </div>
-      )}
-          </div>
+          /* Modular LEARN View with Paragraph Filtering & 16:9 Illustrations */
+          <LearnView
+            result={result}
+            setResult={setResult}
+            savedSentences={savedSentences}
+            categories={categories}
+            sections={sections}
+            user={user}
+            learnSelectedCategory={learnSelectedCategory}
+            setLearnSelectedCategory={setLearnSelectedCategory}
+            learnSelectedSection={learnSelectedSection}
+            setLearnSelectedSection={setLearnSelectedSection}
+            learnSelectedDifficulty={learnSelectedDifficulty}
+            setLearnSelectedDifficulty={setLearnSelectedDifficulty}
+            isSpeaking={isSpeaking}
+            speakSlowGlobal={speakSlowGlobal}
+            setSpeakSlowGlobal={setSpeakSlowGlobal}
+            handleSpeak={handleSpeak}
+            setSelectedIllustrationModal={setSelectedIllustrationModal}
+            setShowDocxExportModal={setShowDocxExportModal}
+            setDocxExportScope={setDocxExportScope}
+            renderHighlightedChinese={renderHighlightedChinese}
+            getDifficultyTranslation={getDifficultyTranslation}
+            getCategoryTheme={getCategoryTheme}
+            onOpenAssignModal={(s) => setAssignSentenceTarget(s)}
+            onOpenReorderModal={(sec) => setReorderSectionTarget(sec)}
+          />
         ) : activeView === 'admin' ? (
           /* ADMIN View */
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
@@ -2957,6 +2300,15 @@ export default function App() {
                              ) : (
                                <div className="flex flex-wrap items-center gap-3">
                                  <div className="text-xs font-bold text-emerald-600 bg-emerald-50 px-2 py-1 rounded-lg">Đã lưu trong thư viện</div>
+                                 <button
+                                   type="button"
+                                   onClick={() => setAssignSentenceTarget(result as SavedSentence)}
+                                   className="flex items-center gap-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200/80 rounded-xl px-2.5 py-1 text-[11px] font-bold cursor-pointer transition-all shadow-xs"
+                                   title="Gán câu này vào đoạn văn đã tạo hoặc tạo đoạn mới (ví dụ: Mẹ tôi nấu ăn)"
+                                 >
+                                   <FolderPlus size={12} className="text-indigo-600" />
+                                   <span>Đoạn: {sections.find(s => s.id === (result as SavedSentence).sectionId)?.name || 'Chưa gán'}</span>
+                                 </button>
                                  <div className="flex items-center gap-1.5 bg-slate-50 border border-slate-100 rounded-xl px-2 py-1">
                                    <span className="text-[10px] font-black text-slate-400 uppercase tracking-wider">Độ khó:</span>
                                    <select
@@ -2983,7 +2335,7 @@ export default function App() {
                                </div>
                              )}
                           </div>
-                          <div className="flex items-center gap-1 bg-slate-50 p-1 rounded-xl border border-slate-100 shrink-0">
+                        <div className="flex items-center gap-1 bg-slate-50 p-1 rounded-xl border border-slate-100 shrink-0">
                             {/* Speak Buttons */}
                             <button 
                               onClick={() => handleSpeak(result.chinese, false)} 
@@ -5032,14 +4384,14 @@ export default function App() {
               initial={{ opacity: 0, scale: 0.9, y: 20 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.9, y: 20 }}
-              className="bg-white rounded-3xl overflow-hidden shadow-2xl max-w-lg w-full border border-slate-100 flex flex-col"
+              className="bg-white rounded-3xl overflow-hidden shadow-2xl max-w-2xl w-full border border-slate-100 flex flex-col"
               onClick={(e) => e.stopPropagation()}
             >
               {/* Modal Header */}
               <div className="p-4 sm:p-5 border-b border-slate-100 flex items-center justify-between bg-slate-50/80">
                 <div className="flex items-center gap-2">
                   <Sparkles className="text-emerald-600" size={18} />
-                  <h3 className="font-bold text-slate-800 text-sm sm:text-base">Tranh minh họa AI chân thực & sắc nét</h3>
+                  <h3 className="font-bold text-slate-800 text-sm sm:text-base">Tranh minh họa 16:9 Widescreen AI</h3>
                 </div>
                 <button
                   onClick={() => setSelectedIllustrationModal(null)}
@@ -5049,21 +4401,26 @@ export default function App() {
                 </button>
               </div>
 
-              {/* Large Artwork Canvas */}
-              <div className="w-full aspect-square bg-slate-900 flex items-center justify-center overflow-hidden relative">
+              {/* Large 16:9 Artwork Canvas */}
+              <div className="w-full aspect-video bg-slate-950 flex items-center justify-center overflow-hidden relative">
                 {selectedIllustrationModal.illustrationSvg.startsWith('data:image/') || selectedIllustrationModal.illustrationSvg.startsWith('http') ? (
                   <img
                     src={selectedIllustrationModal.illustrationSvg}
                     alt={selectedIllustrationModal.chinese}
                     referrerPolicy="no-referrer"
-                    className="w-full h-full object-contain"
+                    className="w-full h-full object-cover"
                   />
                 ) : (
                   <div
-                    className="w-full h-full p-6 flex items-center justify-center [&>svg]:w-full [&>svg]:h-full [&>svg]:object-contain"
+                    className="w-full h-full flex items-center justify-center [&>svg]:w-full [&>svg]:h-full [&>svg]:object-cover"
                     dangerouslySetInnerHTML={{ __html: selectedIllustrationModal.illustrationSvg }}
                   />
                 )}
+
+                {/* 16:9 Badge */}
+                <div className="absolute top-3 left-3 bg-black/60 backdrop-blur-md text-white px-3 py-1 rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-md">
+                  <span>16:9 Widescreen</span>
+                </div>
               </div>
 
               {/* Context Information */}
@@ -5080,7 +4437,18 @@ export default function App() {
                   </p>
                 </div>
 
-                <div className="pt-2 flex justify-end gap-2">
+                <div className="pt-2 flex justify-between items-center gap-2">
+                  <button
+                    onClick={() => {
+                      setSelectedIllustrationModal(null);
+                      setDocxExportScope('current');
+                      setShowDocxExportModal(true);
+                    }}
+                    className="px-4 py-2.5 bg-blue-50 hover:bg-blue-100 text-blue-700 text-xs font-bold rounded-xl transition-all cursor-pointer flex items-center gap-1.5 border border-blue-200"
+                  >
+                    <FileDown size={14} /> Xuất bài học ra Word
+                  </button>
+
                   <button
                     onClick={() => setSelectedIllustrationModal(null)}
                     className="px-5 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-xl transition-all cursor-pointer"
@@ -5093,6 +4461,254 @@ export default function App() {
           </div>
         )}
       </AnimatePresence>
+
+      {/* Word (.docx) Export Modal */}
+      <AnimatePresence>
+        {showDocxExportModal && (
+          <div 
+            className="fixed inset-0 z-[160] flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md"
+            onClick={() => !isExportingDocx && setShowDocxExportModal(false)}
+          >
+            <motion.div
+              initial={{ opacity: 0, scale: 0.92, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.92, y: 20 }}
+              className="bg-white rounded-3xl overflow-hidden shadow-2xl max-w-lg w-full border border-slate-100 flex flex-col"
+              onClick={(e) => e.stopPropagation()}
+            >
+              {/* Header */}
+              <div className="p-5 sm:p-6 border-b border-slate-100 bg-gradient-to-r from-blue-50/70 via-indigo-50/50 to-white flex items-start justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="w-12 h-12 rounded-2xl bg-blue-600 text-white flex items-center justify-center shadow-lg shadow-blue-200 shrink-0">
+                    <FileText size={24} />
+                  </div>
+                  <div>
+                    <h3 className="text-lg font-black text-slate-800 tracking-tight">Tải Bài Học Dưới Dạng File Word</h3>
+                    <p className="text-xs text-slate-500 font-medium mt-0.5">Xuất file .docx chuyên nghiệp có hình minh họa 16:9 & giải thích nghĩa</p>
+                  </div>
+                </div>
+                {!isExportingDocx && (
+                  <button
+                    onClick={() => setShowDocxExportModal(false)}
+                    className="p-1.5 rounded-full hover:bg-slate-200 text-slate-400 hover:text-slate-700 transition-colors cursor-pointer"
+                  >
+                    <X size={18} />
+                  </button>
+                )}
+              </div>
+
+              {/* Content / Options */}
+              <div className="p-6 space-y-5">
+                {docxExportError && (
+                  <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-rose-700 text-xs font-bold flex items-center gap-2">
+                    <X size={14} className="shrink-0 text-rose-500" />
+                    <span>{docxExportError}</span>
+                  </div>
+                )}
+
+                {/* Scope selection */}
+                <div className="space-y-2">
+                  <label className="text-xs font-black text-slate-700 uppercase tracking-wider block">
+                    Phạm vi bài học tải về:
+                  </label>
+                  <div className="grid grid-cols-1 gap-2">
+                    <button
+                      type="button"
+                      disabled={isExportingDocx || !result}
+                      onClick={() => setDocxExportScope('current')}
+                      className={`p-3 rounded-2xl border text-left flex items-center justify-between transition-all cursor-pointer ${
+                        docxExportScope === 'current'
+                          ? 'border-blue-600 bg-blue-50/60 text-blue-950 font-bold shadow-xs'
+                          : 'border-slate-200 bg-slate-50/50 hover:bg-slate-50 text-slate-700'
+                      }`}
+                    >
+                      <div className="flex items-center gap-3">
+                        <span className="text-base">📄</span>
+                        <div>
+                          <p className="text-xs font-bold">Bài học hiện tại</p>
+                          <p className="text-[10px] text-slate-500 font-normal">
+                            {result ? (result.chinese.length > 25 ? result.chinese.slice(0, 25) + '...' : result.chinese) : 'Chưa chọn'}
+                          </p>
+                        </div>
+                      </div>
+                      {docxExportScope === 'current' && <Check size={16} className="text-blue-600" />}
+                    </button>
+
+                    <button
+                      type="button"
+                      disabled={isExportingDocx}
+                      onClick={() => setDocxExportScope('category')}
+                      className={`p-3 rounded-2xl border text-left flex items-center justify-between transition-all cursor-pointer ${
+                        docxExportScope === 'category'
+                          ? 'border-blue-600 bg-blue-50/60 text-blue-950 font-bold shadow-xs'
+                          : 'border-slate-200 bg-slate-50/50 hover:bg-slate-50 text-slate-700'
+                      }`}
+                    >
+                      <div className="flex items-center gap-3">
+                        <span className="text-base">📚</span>
+                        <div>
+                          <p className="text-xs font-bold">Toàn bộ chủ đề: {learnSelectedCategory === 'all' ? 'Tất cả chủ đề' : (categories.find(c => c.id === learnSelectedCategory)?.name || 'Chung')}</p>
+                          <p className="text-[10px] text-slate-500 font-normal">
+                            {savedSentences.filter(s => learnSelectedCategory === 'all' || s.categoryId === learnSelectedCategory).length} bài học
+                          </p>
+                        </div>
+                      </div>
+                      {docxExportScope === 'category' && <Check size={16} className="text-blue-600" />}
+                    </button>
+
+                    <button
+                      type="button"
+                      disabled={isExportingDocx}
+                      onClick={() => setDocxExportScope('all')}
+                      className={`p-3 rounded-2xl border text-left flex items-center justify-between transition-all cursor-pointer ${
+                        docxExportScope === 'all'
+                          ? 'border-blue-600 bg-blue-50/60 text-blue-950 font-bold shadow-xs'
+                          : 'border-slate-200 bg-slate-50/50 hover:bg-slate-50 text-slate-700'
+                      }`}
+                    >
+                      <div className="flex items-center gap-3">
+                        <span className="text-base">🗂️</span>
+                        <div>
+                          <p className="text-xs font-bold">Toàn bộ sổ tay học tập</p>
+                          <p className="text-[10px] text-slate-500 font-normal">{savedSentences.length} bài học trong tất cả chủ đề</p>
+                        </div>
+                      </div>
+                      {docxExportScope === 'all' && <Check size={16} className="text-blue-600" />}
+                    </button>
+                  </div>
+                </div>
+
+                {/* Content checkboxes */}
+                <div className="space-y-2 pt-2 border-t border-slate-100">
+                  <label className="text-xs font-black text-slate-700 uppercase tracking-wider block">
+                    Nội dung bao gồm trong Word:
+                  </label>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
+                    <label className="flex items-center gap-2 p-2 rounded-xl bg-slate-50 border border-slate-100 cursor-pointer hover:bg-slate-100/70 transition-colors">
+                      <input
+                        type="checkbox"
+                        checked={docxIncludeIllustrations}
+                        onChange={(e) => setDocxIncludeIllustrations(e.target.checked)}
+                        disabled={isExportingDocx}
+                        className="rounded text-blue-600 focus:ring-blue-500 w-4 h-4 cursor-pointer"
+                      />
+                      <span className="font-bold text-slate-700">🖼️ Ảnh minh họa 16:9</span>
+                    </label>
+
+                    <label className="flex items-center gap-2 p-2 rounded-xl bg-slate-50 border border-slate-100 cursor-pointer hover:bg-slate-100/70 transition-colors">
+                      <input
+                        type="checkbox"
+                        checked={docxIncludeGrammar}
+                        onChange={(e) => setDocxIncludeGrammar(e.target.checked)}
+                        disabled={isExportingDocx}
+                        className="rounded text-blue-600 focus:ring-blue-500 w-4 h-4 cursor-pointer"
+                      />
+                      <span className="font-bold text-slate-700">📖 Giải thích nghĩa & ngữ pháp</span>
+                    </label>
+
+                    <label className="flex items-center gap-2 p-2 rounded-xl bg-slate-50 border border-slate-100 cursor-pointer hover:bg-slate-100/70 transition-colors">
+                      <input
+                        type="checkbox"
+                        checked={docxIncludeVariations}
+                        onChange={(e) => setDocxIncludeVariations(e.target.checked)}
+                        disabled={isExportingDocx}
+                        className="rounded text-blue-600 focus:ring-blue-500 w-4 h-4 cursor-pointer"
+                      />
+                      <span className="font-bold text-slate-700">🔄 3 Mẫu câu biến thể mở rộng</span>
+                    </label>
+
+                    <label className="flex items-center gap-2 p-2 rounded-xl bg-slate-50 border border-slate-100 cursor-pointer hover:bg-slate-100/70 transition-colors">
+                      <input
+                        type="checkbox"
+                        checked={docxIncludePracticeGrid}
+                        onChange={(e) => setDocxIncludePracticeGrid(e.target.checked)}
+                        disabled={isExportingDocx}
+                        className="rounded text-blue-600 focus:ring-blue-500 w-4 h-4 cursor-pointer"
+                      />
+                      <span className="font-bold text-slate-700">✍️ Ô kẻ tập viết chữ Hán</span>
+                    </label>
+                  </div>
+                </div>
+
+                {/* Progress display while exporting */}
+                {isExportingDocx && (
+                  <div className="p-4 bg-blue-50/60 rounded-2xl border border-blue-200/60 space-y-2">
+                    <div className="flex items-center justify-between text-xs font-bold text-blue-900">
+                      <span className="flex items-center gap-2">
+                        <Loader2 className="animate-spin text-blue-600" size={15} />
+                        <span>{docxExportStatus || 'Đang xử lý tài liệu Word...'}</span>
+                      </span>
+                      <span>{docxExportProgress}%</span>
+                    </div>
+                    <div className="w-full bg-blue-100 rounded-full h-2 overflow-hidden">
+                      <div 
+                        className="bg-gradient-to-r from-blue-500 to-indigo-600 h-full rounded-full transition-all duration-300"
+                        style={{ width: `${docxExportProgress}%` }}
+                      />
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Footer Actions */}
+              <div className="p-4 sm:p-5 border-t border-slate-100 bg-slate-50 flex items-center justify-end gap-3">
+                <button
+                  type="button"
+                  disabled={isExportingDocx}
+                  onClick={() => setShowDocxExportModal(false)}
+                  className="px-4 py-2.5 bg-white hover:bg-slate-100 text-slate-600 text-xs font-bold rounded-xl border border-slate-200 transition-all cursor-pointer disabled:opacity-50"
+                >
+                  Hủy bỏ
+                </button>
+
+                <button
+                  type="button"
+                  disabled={isExportingDocx}
+                  onClick={() => handleExportLessonsToDocx()}
+                  className="px-6 py-2.5 bg-blue-600 hover:bg-blue-700 active:scale-95 text-white text-xs font-extrabold rounded-xl shadow-lg shadow-blue-200 transition-all flex items-center gap-2 cursor-pointer disabled:opacity-50"
+                >
+                  {isExportingDocx ? (
+                    <>
+                      <Loader2 className="animate-spin" size={16} />
+                      <span>Đang xuất Word...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Download size={16} />
+                      <span>Tải File Word (.docx) Ngay</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Assign Sentence to Section Modal */}
+      <AssignSectionModal
+        isOpen={Boolean(assignSentenceTarget)}
+        onClose={() => setAssignSentenceTarget(null)}
+        sentence={assignSentenceTarget}
+        categories={categories}
+        sections={sections}
+        savedSentences={savedSentences}
+        onAssignSection={handleAssignSection}
+        onCreateSection={handleCreateSectionDirect}
+        onOpenReorderSection={(sec) => {
+          setAssignSentenceTarget(null);
+          setReorderSectionTarget(sec);
+        }}
+      />
+
+      {/* Reorder Section Sentences Modal */}
+      <ReorderSectionSentencesModal
+        isOpen={Boolean(reorderSectionTarget)}
+        onClose={() => setReorderSectionTarget(null)}
+        section={reorderSectionTarget}
+        sentences={savedSentences}
+        onSaveOrder={handleReorderSectionSentences}
+      />
 
       {/* Mobile Compact Bottom Navigation Bar */}
       <nav className="lg:hidden fixed bottom-0 left-0 right-0 h-16 bg-white/95 backdrop-blur-md border-t border-slate-200/80 px-2 flex items-center justify-around z-40 shadow-lg">

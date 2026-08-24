@@ -62,7 +62,7 @@ export const translateAndExplain = async (text: string): Promise<TranslationResu
           grammarExplanation: { type: Type.STRING, description: "A detailed grammar and vocabulary breakdown in Vietnamese (Markdown format, one point per line)" },
           illustrationSvg: { 
             type: Type.STRING, 
-            description: "A rich, highly detailed, responsive raw SVG illustration representing the realistic scene of the sentence. It must start with <svg> and end with </svg>, viewBox '0 0 300 300', with <defs> gradients, depth, realistic lighting, and layered elements. No markdown wrapper." 
+            description: "A rich, highly detailed, responsive raw SVG illustration representing the realistic scene of the sentence in 16:9 widescreen proportion. It must start with <svg> and end with </svg>, viewBox '0 0 800 450', width='100%', height='100%', preserveAspectRatio='xMidYMid slice', with <defs> gradients, depth, realistic lighting, and layered elements. No markdown wrapper." 
           },
           variations: {
             type: Type.ARRAY,
@@ -104,7 +104,7 @@ export const translateAndExplain = async (text: string): Promise<TranslationResu
 
 export type IllustrationStyle = 'photorealistic' | '3d-cinematic' | 'chinese-art' | 'detailed-vector';
 
-export const compressDataUrl = async (dataUrl: string, maxDimension = 512, quality = 0.85): Promise<string> => {
+export const compressDataUrl = async (dataUrl: string, maxDimension = 960, quality = 0.88): Promise<string> => {
   if (typeof window === 'undefined' || !dataUrl.startsWith('data:image/')) {
     return dataUrl;
   }
@@ -158,13 +158,13 @@ export const generateRealisticIllustration = async (
 
   let styleDesc = "";
   if (style === 'photorealistic') {
-    styleDesc = "A hyper-realistic, vivid, ultra-detailed 8k photograph portraying the real-life setting or action of the sentence. Cinematic soft lighting, shallow depth of field, authentic environment, highly realistic textures, vivid true-to-life colors, award-winning photography.";
+    styleDesc = "A hyper-realistic, vivid, ultra-detailed 8k photograph portraying the real-life setting or action of the sentence. Cinematic widescreen framing, soft ambient lighting, shallow depth of field, authentic environment, highly realistic textures, vivid true-to-life colors, award-winning photography.";
   } else if (style === '3d-cinematic') {
-    styleDesc = "Breathtaking 3D digital art masterpiece, Pixar and Unreal Engine 5 aesthetic, volumetric lighting, rich material shaders, realistic 3D depth, ray-traced shadows, highly detailed and vibrant.";
+    styleDesc = "Breathtaking 3D digital art masterpiece, Pixar and Unreal Engine 5 aesthetic, cinematic 16:9 framing, volumetric lighting, rich material shaders, realistic 3D depth, ray-traced shadows, highly detailed and vibrant.";
   } else if (style === 'chinese-art') {
-    styleDesc = "Traditional high-end Chinese watercolor and ink wash painting (Guohua), delicate artistic brush strokes, misty mountains, poetic atmosphere, elegant classical Asian cultural aesthetics.";
+    styleDesc = "Traditional high-end Chinese watercolor and ink wash painting (Guohua) in widescreen panoramic format, delicate artistic brush strokes, misty mountains, poetic atmosphere, elegant classical Asian cultural aesthetics.";
   } else {
-    styleDesc = "Highly detailed editorial vector illustration with rich multi-stop gradients, ambient lighting, volumetric depth, and intricate background elements.";
+    styleDesc = "Highly detailed editorial vector illustration in 16:9 widescreen ratio with rich multi-stop gradients, ambient lighting, volumetric depth, and intricate background elements.";
   }
 
   // 1. Try direct AI Image Generation (gemini-3.1-flash-image)
@@ -174,13 +174,13 @@ export const generateRealisticIllustration = async (
       contents: {
         parts: [
           {
-            text: `Generate a stunning, highly realistic and visually rich illustration for the Chinese sentence: "${chinese}" (Meaning: "${meaning}"). ${styleDesc} Square composition, rich detail, high clarity.`,
+            text: `Generate a stunning, highly realistic and visually rich 16:9 widescreen illustration for the Chinese sentence: "${chinese}" (Meaning: "${meaning}"). ${styleDesc} Expansive 16:9 widescreen composition, rich background detail, high clarity, no borders.`,
           },
         ],
       },
       config: {
         imageConfig: {
-          aspectRatio: "1:1",
+          aspectRatio: "16:9",
           imageSize: "1K",
         },
       },
@@ -191,7 +191,7 @@ export const generateRealisticIllustration = async (
         if (part.inlineData && part.inlineData.data) {
           const mime = part.inlineData.mimeType || "image/png";
           const rawDataUrl = `data:${mime};base64,${part.inlineData.data}`;
-          return await compressDataUrl(rawDataUrl, 512, 0.85);
+          return await compressDataUrl(rawDataUrl, 960, 0.88);
         }
       }
     }
@@ -205,7 +205,7 @@ export const generateRealisticIllustration = async (
         contents: {
           parts: [
             {
-              text: `Generate a realistic visual scene representing "${chinese}" (${meaning}). ${styleDesc}`,
+              text: `Generate a realistic visual scene in 16:9 widescreen format representing "${chinese}" (${meaning}). ${styleDesc}`,
             },
           ],
         },
@@ -215,7 +215,7 @@ export const generateRealisticIllustration = async (
           if (part.inlineData && part.inlineData.data) {
             const mime = part.inlineData.mimeType || "image/png";
             const rawDataUrl = `data:${mime};base64,${part.inlineData.data}`;
-            return await compressDataUrl(rawDataUrl, 512, 0.85);
+            return await compressDataUrl(rawDataUrl, 960, 0.88);
           }
         }
       }
@@ -224,14 +224,14 @@ export const generateRealisticIllustration = async (
     }
   }
 
-  // 3. Fallback: Ultra-detailed, realistic multi-gradient SVG with atmospheric depth
+  // 3. Fallback: Ultra-detailed, realistic multi-gradient SVG with atmospheric depth in 16:9 ratio
   const svgPrompt = `Create a rich, multi-layered, visually detailed inline SVG illustration for the Chinese sentence: "${chinese}" (Meaning: "${meaning}").
   
   REALISM & DETAIL REQUIREMENTS:
   - Do NOT draw flat or childish stick figures or simple single-color shapes.
   - Create rich visual depth using <defs> with multiple <linearGradient> and <radialGradient> definitions to model realistic lighting, soft highlights, cast shadows, and depth of field.
   - Include realistic context details (such as detailed scenery, architectural elements, textures, sunlight/moonlight glares, natural foliage, or realistic props).
-  - The SVG MUST have viewBox="0 0 300 300" and width="100%" height="100%".
+  - The SVG MUST have viewBox="0 0 800 450", width="100%", height="100%", preserveAspectRatio="xMidYMid slice" to fit a 16:9 widescreen layout perfectly.
   - Return ONLY raw SVG markup starting with "<svg" and ending with "</svg>". No markdown wrappers.`;
 
   const svgResponse = await ai.models.generateContent({
