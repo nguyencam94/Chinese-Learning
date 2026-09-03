@@ -29,16 +29,44 @@ import {
   X,
   Share2,
   Sliders,
-  Check
+  Check,
+  Bookmark,
+  BookmarkCheck,
+  Star,
+  Clock,
+  FolderHeart,
+  WifiOff,
+  CloudOff,
+  Cloud,
+  CloudCheck,
+  CloudUpload
 } from 'lucide-react';
 import HanziWriter from 'hanzi-writer';
 import { analyzeSingleCharacter, CharacterAnalysisResult } from '../services/geminiService';
+import { DEFAULT_OFFLINE_CHARACTERS } from '../data/defaultCharacters';
+import { cachedCharDataLoader } from '../utils/hanziLoader';
 import { 
   recordStrokeVideo, 
   generateHandwritingWorksheet, 
   VideoExportResult 
 } from '../utils/strokeVideoExporter';
 import { exportSingleCharacterToDocx } from '../utils/docxExporter';
+import { 
+  db, 
+  auth, 
+  collection, 
+  addDoc, 
+  deleteDoc, 
+  doc, 
+  onSnapshot, 
+  query, 
+  where, 
+  serverTimestamp, 
+  handleFirestoreError, 
+  OperationType,
+  User 
+} from '../lib/firebase';
+import { SavedCharacter } from '../types';
 
 const SUGGESTED_CHARS = [
   { char: "好", meaning: "Tốt, đẹp", pinyin: "hǎo", sinoViet: "Hảo" },
@@ -62,12 +90,41 @@ const BRUSH_COLORS = [
   { name: 'Xanh lam', value: '#2563eb' }
 ];
 
-export default function SingleCharacterLearn() {
+const LOCAL_STORAGE_SAVED_CHARS = 'tiengtrung_saved_characters_v1';
+const LOCAL_STORAGE_AUTOSAVE = 'tiengtrung_autosave_characters_enabled';
+
+interface SingleCharacterLearnProps {
+  user?: User | null;
+}
+
+export default function SingleCharacterLearn({ user }: SingleCharacterLearnProps) {
   const [charInput, setCharInput] = useState('');
   const [selectedChar, setSelectedChar] = useState('好');
   const [analysis, setAnalysis] = useState<CharacterAnalysisResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Saved Characters Persistence State
+  const [savedCharacters, setSavedCharacters] = useState<SavedCharacter[]>(() => {
+    try {
+      const raw = localStorage.getItem(LOCAL_STORAGE_SAVED_CHARS);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) return parsed;
+      }
+    } catch (e) {}
+    return [];
+  });
+
+  const [isAutoSaveEnabled, setIsAutoSaveEnabled] = useState<boolean>(() => {
+    return localStorage.getItem(LOCAL_STORAGE_AUTOSAVE) !== 'false';
+  });
+
+  const [activeTab, setActiveTab] = useState<'suggested' | 'saved'>('suggested');
+  const [savedCharsFilter, setSavedCharsFilter] = useState('');
+  const [isSavingChar, setIsSavingChar] = useState(false);
+  const [saveSuccessMsg, setSaveSuccessMsg] = useState<string | null>(null);
+  const [loadedFromCache, setLoadedFromCache] = useState(false);
 
   // Tab mode for stroke section: 'video' | 'quiz' | 'freehand'
   const [strokeMode, setStrokeMode] = useState<'video' | 'quiz' | 'freehand'>('video');
@@ -111,17 +168,274 @@ export default function SingleCharacterLearn() {
   const [isExportingDocx, setIsExportingDocx] = useState(false);
   const [exportError, setExportError] = useState<string | null>(null);
 
+  // Sync with Firestore when user logs in
+  useEffect(() => {
+    const currentUid = user?.uid || auth.currentUser?.uid;
+    if (!currentUid) return;
+
+    try {
+      const q = query(
+        collection(db, 'saved_characters'),
+        where('userId', '==', currentUid)
+      );
+
+      const unsubscribe = onSnapshot(q, (snapshot) => {
+        const remoteChars: SavedCharacter[] = snapshot.docs.map(d => ({
+          id: d.id,
+          ...(d.data() as Omit<SavedCharacter, 'id'>)
+        }));
+
+        remoteChars.sort((a, b) => {
+          const timeA = a.createdAt?.seconds ? a.createdAt.seconds * 1000 : (new Date(a.createdAt).getTime() || 0);
+          const timeB = b.createdAt?.seconds ? b.createdAt.seconds * 1000 : (new Date(b.createdAt).getTime() || 0);
+          return timeB - timeA;
+        });
+
+        setSavedCharacters(prev => {
+          const map = new Map<string, SavedCharacter>();
+          remoteChars.forEach(rc => map.set(rc.character, rc));
+          prev.forEach(lc => {
+            if (!map.has(lc.character)) {
+              map.set(lc.character, lc);
+            }
+          });
+          const merged = Array.from(map.values());
+          try {
+            localStorage.setItem(LOCAL_STORAGE_SAVED_CHARS, JSON.stringify(merged));
+          } catch (e) {}
+          return merged;
+        });
+      }, (error) => {
+        console.error("Firestore onSnapshot error for saved_characters:", error);
+        handleFirestoreError(error, OperationType.GET, 'saved_characters');
+      });
+
+      return () => unsubscribe();
+    } catch (err) {
+      console.error("Lỗi khởi tạo listener Firestore:", err);
+    }
+  }, [user]);
+
+  const [isSyncingCloud, setIsSyncingCloud] = useState(false);
+
+  // Sync any offline/local characters up to Firebase Cloud
+  const handleSyncToCloud = async () => {
+    const currentUid = user?.uid || auth.currentUser?.uid;
+    if (!currentUid) {
+      alert("Vui lòng đăng nhập tài khoản Google của bạn ở góc trên cùng để đồng bộ chữ lên Firebase Cloud!");
+      return;
+    }
+
+    const unsynced = savedCharacters.filter(c => !c.userId || c.id?.startsWith('local_'));
+    if (unsynced.length === 0) {
+      setSaveSuccessMsg("☁️ Tất cả chữ trong Thư viện đã được đồng bộ vĩnh viễn trên Firebase Cloud!");
+      setTimeout(() => setSaveSuccessMsg(null), 3000);
+      return;
+    }
+
+    setIsSyncingCloud(true);
+    try {
+      let count = 0;
+      for (const item of unsynced) {
+        const docRef = await addDoc(collection(db, 'saved_characters'), {
+          character: item.character,
+          pinyin: item.pinyin,
+          sinoVietnamese: item.sinoVietnamese,
+          vietnameseMeaning: item.vietnameseMeaning,
+          totalStrokes: item.totalStrokes,
+          strokeSequenceInstructions: item.strokeSequenceInstructions || [],
+          radicals: item.radicals || [],
+          composition: item.composition,
+          examples: item.examples || [],
+          userId: currentUid,
+          createdAt: serverTimestamp()
+        });
+        item.id = docRef.id;
+        item.userId = currentUid;
+        count++;
+      }
+      const updated = [...savedCharacters];
+      setSavedCharacters(updated);
+      try {
+        localStorage.setItem(LOCAL_STORAGE_SAVED_CHARS, JSON.stringify(updated));
+      } catch (e) {}
+
+      setSaveSuccessMsg(`☁️ Đã đồng bộ thành công ${count} chữ từ máy lên Firebase Cloud an toàn!`);
+      setTimeout(() => setSaveSuccessMsg(null), 3500);
+    } catch (err) {
+      console.error("Lỗi đồng bộ Firestore:", err);
+      setSaveSuccessMsg("Không thể đồng bộ lên Firebase lúc này. Vui lòng thử lại sau.");
+      setTimeout(() => setSaveSuccessMsg(null), 3500);
+    } finally {
+      setIsSyncingCloud(false);
+    }
+  };
+
+  // Save Character Data (to Firestore & LocalStorage)
+  const handleSaveCharacter = async (dataToSave?: CharacterAnalysisResult, silent = false) => {
+    const target = dataToSave || analysis;
+    if (!target) return;
+
+    const exists = savedCharacters.some(sc => sc.character === target.character);
+    if (exists && !dataToSave) {
+      setSaveSuccessMsg(`Chữ "${target.character}" đã có sẵn trong Thư viện của bạn!`);
+      setTimeout(() => setSaveSuccessMsg(null), 3000);
+      return;
+    }
+
+    setIsSavingChar(true);
+    const currentUid = user?.uid || auth.currentUser?.uid;
+
+    const newChar: SavedCharacter = {
+      id: 'local_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7),
+      character: target.character,
+      pinyin: target.pinyin,
+      sinoVietnamese: target.sinoVietnamese,
+      vietnameseMeaning: target.vietnameseMeaning,
+      totalStrokes: target.totalStrokes,
+      strokeSequenceInstructions: target.strokeSequenceInstructions || [],
+      radicals: target.radicals || [],
+      composition: target.composition,
+      examples: target.examples || [],
+      createdAt: new Date().toISOString()
+    };
+
+    if (currentUid) {
+      newChar.userId = currentUid;
+    }
+
+    try {
+      if (currentUid) {
+        const docRef = await addDoc(collection(db, 'saved_characters'), {
+          character: target.character,
+          pinyin: target.pinyin,
+          sinoVietnamese: target.sinoVietnamese,
+          vietnameseMeaning: target.vietnameseMeaning,
+          totalStrokes: target.totalStrokes,
+          strokeSequenceInstructions: target.strokeSequenceInstructions || [],
+          radicals: target.radicals || [],
+          composition: target.composition,
+          examples: target.examples || [],
+          userId: currentUid,
+          createdAt: serverTimestamp()
+        });
+        newChar.id = docRef.id;
+      }
+
+      setSavedCharacters(prev => {
+        const filtered = prev.filter(c => c.character !== target.character);
+        const updated = [newChar, ...filtered];
+        try {
+          localStorage.setItem(LOCAL_STORAGE_SAVED_CHARS, JSON.stringify(updated));
+        } catch (e) {}
+        return updated;
+      });
+
+      if (!silent) {
+        if (currentUid) {
+          setSaveSuccessMsg(`☁️ Đã lưu chữ "${target.character}" (${target.sinoVietnamese}) lên Firebase Cloud & thiết bị!`);
+        } else {
+          setSaveSuccessMsg(`💾 Đã lưu chữ "${target.character}" (${target.sinoVietnamese}) vào máy (Đăng nhập để đồng bộ Firebase Cloud)!`);
+        }
+        setTimeout(() => setSaveSuccessMsg(null), 3500);
+      }
+    } catch (err: any) {
+      console.error("Lỗi khi lưu chữ Hán vào Firestore:", err);
+      // Fallback local persistence
+      setSavedCharacters(prev => {
+        const filtered = prev.filter(c => c.character !== target.character);
+        const updated = [newChar, ...filtered];
+        try {
+          localStorage.setItem(LOCAL_STORAGE_SAVED_CHARS, JSON.stringify(updated));
+        } catch (e) {}
+        return updated;
+      });
+      if (!silent) {
+        setSaveSuccessMsg(`💾 Đã lưu chữ "${target.character}" vào bộ nhớ máy (sẽ tự động đồng bộ lên Firebase khi có mạng).`);
+        setTimeout(() => setSaveSuccessMsg(null), 3500);
+      }
+    } finally {
+      setIsSavingChar(false);
+    }
+  };
+
+  // Delete saved character
+  const handleDeleteSavedCharacter = async (charRecord: SavedCharacter, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    const confirmed = window.confirm(`Bạn có chắc muốn xóa chữ "${charRecord.character}" (${charRecord.sinoVietnamese}) khỏi thư viện đã lưu?`);
+    if (!confirmed) return;
+
+    const currentUid = user?.uid || auth.currentUser?.uid;
+
+    try {
+      if (currentUid && charRecord.id && !charRecord.id.startsWith('local_')) {
+        await deleteDoc(doc(db, 'saved_characters', charRecord.id));
+      }
+      setSavedCharacters(prev => {
+        const updated = prev.filter(c => c.character !== charRecord.character && c.id !== charRecord.id);
+        try {
+          localStorage.setItem(LOCAL_STORAGE_SAVED_CHARS, JSON.stringify(updated));
+        } catch (e) {}
+        return updated;
+      });
+      setSaveSuccessMsg(`Đã xóa chữ "${charRecord.character}" khỏi thư viện.`);
+      setTimeout(() => setSaveSuccessMsg(null), 2500);
+    } catch (err: any) {
+      console.error("Lỗi xóa chữ đã lưu:", err);
+      handleFirestoreError(err, OperationType.DELETE, 'saved_characters');
+    }
+  };
+
+  const handleSelectCharacter = (char: string, cachedRecord?: SavedCharacter | CharacterAnalysisResult) => {
+    setSelectedChar(char);
+    if (cachedRecord) {
+      setAnalysis(cachedRecord);
+      setLoadedFromCache(true);
+      setError(null);
+      setSaveSuccessMsg(`✨ Đã nạp chữ "${cachedRecord.character}" (${cachedRecord.sinoVietnamese}) từ Thư viện lưu trữ offline!`);
+      setTimeout(() => setSaveSuccessMsg(null), 2500);
+    }
+  };
+
   // Fetch character analysis on selected character change
   useEffect(() => {
+    // If analysis is already populated for this character, no need to re-fetch
+    if (analysis && analysis.character === selectedChar) {
+      return;
+    }
+
+    // 1. Check if it already exists in savedCharacters
+    const existing = savedCharacters.find(sc => sc.character === selectedChar);
+    if (existing) {
+      setAnalysis(existing);
+      setLoadedFromCache(true);
+      setLoading(false);
+      setError(null);
+      return;
+    }
+
+    // 2. Check if it exists in pre-baked offline dictionary
+    if (DEFAULT_OFFLINE_CHARACTERS[selectedChar]) {
+      setAnalysis(DEFAULT_OFFLINE_CHARACTERS[selectedChar]);
+      setLoadedFromCache(true);
+      setLoading(false);
+      setError(null);
+      return;
+    }
+
     const fetchAnalysis = async () => {
       setLoading(true);
       setError(null);
+      setLoadedFromCache(false);
       try {
         const result = await analyzeSingleCharacter(selectedChar);
         setAnalysis(result);
+        if (isAutoSaveEnabled) {
+          handleSaveCharacter(result, true);
+        }
       } catch (err: any) {
         console.error("Lỗi phân tích chữ đơn:", err);
-        setError("Không thể tải thông tin phân tích từ AI. Vui lòng thử lại sau.");
+        setError("Không thể kết nối đến máy chủ AI lúc này (có thể do mất mạng hoặc dịch vụ AI gián đoạn). Bạn vẫn có thể mở các chữ đã lưu trong Thư viện hoặc chọn 12 chữ mẫu phổ biến có sẵn để học và luyện viết hoàn toàn offline!");
       } finally {
         setLoading(false);
       }
@@ -157,6 +471,7 @@ export default function SingleCharacterLearn() {
         outlineColor: '#e2e8f0',
         drawingColor: '#2563eb',
         drawingWidth: 16,
+        charDataLoader: cachedCharDataLoader,
         showCharacter: strokeMode !== 'quiz',
         onLoadCharDataSuccess: () => {
           if (!isMounted) return;
@@ -506,12 +821,50 @@ export default function SingleCharacterLearn() {
     const trimmed = charInput.trim();
     if (!trimmed) return;
     const singleChar = trimmed.charAt(0);
-    setSelectedChar(singleChar);
+    
+    // Check if character already exists in savedCharacters or offline dictionary
+    const existing = savedCharacters.find(sc => sc.character === singleChar);
+    if (existing) {
+      handleSelectCharacter(singleChar, existing);
+    } else if (DEFAULT_OFFLINE_CHARACTERS[singleChar]) {
+      handleSelectCharacter(singleChar, DEFAULT_OFFLINE_CHARACTERS[singleChar]);
+    } else {
+      setSelectedChar(singleChar);
+    }
     setCharInput('');
   };
 
+  const filteredSavedChars = savedCharacters.filter(sc => {
+    if (!savedCharsFilter.trim()) return true;
+    const q = savedCharsFilter.toLowerCase().trim();
+    return (
+      sc.character.includes(q) ||
+      (sc.pinyin && sc.pinyin.toLowerCase().includes(q)) ||
+      (sc.sinoVietnamese && sc.sinoVietnamese.toLowerCase().includes(q)) ||
+      (sc.vietnameseMeaning && sc.vietnameseMeaning.toLowerCase().includes(q))
+    );
+  });
+
+  const currentSavedRecord = savedCharacters.find(sc => sc.character === selectedChar);
+  const isCurrentCharSaved = Boolean(currentSavedRecord);
+
   return (
     <div className="space-y-6 md:space-y-8 animate-fade-in pb-16">
+      {/* Toast Notification */}
+      <AnimatePresence>
+        {saveSuccessMsg && (
+          <motion.div
+            initial={{ opacity: 0, y: -20, scale: 0.95 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: -20, scale: 0.95 }}
+            className="fixed top-20 left-1/2 -translate-x-1/2 z-50 bg-slate-900/95 text-white px-5 py-3 rounded-2xl shadow-2xl border border-slate-700 flex items-center gap-2.5 text-xs font-bold backdrop-blur-xs"
+          >
+            <CheckCircle2 size={16} className="text-emerald-400 shrink-0" />
+            <span>{saveSuccessMsg}</span>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* Header Banner */}
       <div className="bg-gradient-to-r from-indigo-50 via-purple-50 to-pink-50 p-6 md:p-8 rounded-3xl border border-indigo-100/50 shadow-sm">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
@@ -530,47 +883,254 @@ export default function SingleCharacterLearn() {
             </p>
           </div>
 
-          {/* Search Box */}
-          <form onSubmit={handleSearchSubmit} className="flex gap-2 w-full md:w-auto max-w-md">
-            <div className="relative flex-1 min-w-[200px]">
-              <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
-              <input
-                type="text"
-                placeholder="Nhập bất kỳ chữ Hán nào (vd: 你, 好, 学)..."
-                value={charInput}
-                onChange={(e) => setCharInput(e.target.value)}
-                maxLength={5}
-                className="w-full pl-10 pr-4 py-3 bg-white text-slate-800 text-sm font-semibold rounded-2xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 shadow-sm"
-              />
+          {/* Search Box & Auto-Save Toggle */}
+          <div className="flex flex-col gap-2 w-full md:w-auto max-w-md">
+            <form onSubmit={handleSearchSubmit} className="flex gap-2">
+              <div className="relative flex-1 min-w-[200px]">
+                <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
+                <input
+                  type="text"
+                  placeholder="Nhập bất kỳ chữ Hán nào (vd: 你, 好, 学)..."
+                  value={charInput}
+                  onChange={(e) => setCharInput(e.target.value)}
+                  maxLength={5}
+                  className="w-full pl-10 pr-4 py-3 bg-white text-slate-800 text-sm font-semibold rounded-2xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 shadow-sm"
+                />
+              </div>
+              <button
+                type="submit"
+                className="px-5 py-3 bg-indigo-600 hover:bg-indigo-700 active:scale-95 transition-all text-white font-bold text-sm rounded-2xl shadow-md flex items-center gap-1.5 cursor-pointer shrink-0"
+              >
+                Phân tích
+              </button>
+            </form>
+
+            {/* Auto Save Toggle */}
+            <div className="flex items-center justify-between px-1 text-xs text-slate-600 font-bold">
+              <label className="flex items-center gap-2 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={isAutoSaveEnabled}
+                  onChange={(e) => {
+                    const checked = e.target.checked;
+                    setIsAutoSaveEnabled(checked);
+                    try {
+                      localStorage.setItem(LOCAL_STORAGE_AUTOSAVE, String(checked));
+                    } catch (err) {}
+                  }}
+                  className="w-4 h-4 rounded text-indigo-600 focus:ring-indigo-500 border-slate-300"
+                />
+                <span className="text-slate-600">Tự động lưu vào Thư viện chữ khi tìm kiếm AI</span>
+              </label>
             </div>
-            <button
-              type="submit"
-              className="px-5 py-3 bg-indigo-600 hover:bg-indigo-700 active:scale-95 transition-all text-white font-bold text-sm rounded-2xl shadow-md flex items-center gap-1.5 cursor-pointer shrink-0"
-            >
-              Phân tích
-            </button>
-          </form>
+          </div>
         </div>
 
-        {/* Suggested Characters Selection */}
-        <div className="mt-6 pt-4 border-t border-indigo-100/60">
-          <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-3">Chữ gợi ý phổ biến:</p>
-          <div className="flex flex-wrap gap-2">
-            {SUGGESTED_CHARS.map((sc) => (
+        {/* Tab Selection: Suggested vs Saved Characters */}
+        <div className="mt-6 pt-4 border-t border-indigo-100/60 space-y-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-2">
               <button
-                key={sc.char}
-                onClick={() => setSelectedChar(sc.char)}
-                className={`px-3 py-2 rounded-xl text-sm font-bold border transition-all cursor-pointer flex items-center gap-1.5 ${
-                  selectedChar === sc.char
-                    ? 'bg-indigo-600 text-white border-indigo-600 shadow-md scale-105'
-                    : 'bg-white text-slate-700 border-slate-200/80 hover:border-indigo-300 hover:bg-slate-50'
+                type="button"
+                onClick={() => setActiveTab('suggested')}
+                className={`px-3.5 py-1.5 rounded-xl text-xs font-black transition-all cursor-pointer flex items-center gap-1.5 ${
+                  activeTab === 'suggested'
+                    ? 'bg-slate-800 text-white shadow-sm'
+                    : 'bg-white/80 hover:bg-white text-slate-600 border border-slate-200/80'
                 }`}
               >
-                <span className="text-lg font-black">{sc.char}</span>
-                <span className="text-[10px] opacity-80">({sc.sinoViet})</span>
+                <span>Chữ gợi ý phổ biến</span>
+                <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-slate-200/40">{SUGGESTED_CHARS.length}</span>
               </button>
-            ))}
+
+              <button
+                type="button"
+                onClick={() => setActiveTab('saved')}
+                className={`px-3.5 py-1.5 rounded-xl text-xs font-black transition-all cursor-pointer flex items-center gap-1.5 ${
+                  activeTab === 'saved'
+                    ? 'bg-indigo-600 text-white shadow-sm'
+                    : 'bg-white/80 hover:bg-white text-indigo-700 border border-indigo-200/80'
+                }`}
+              >
+                <Bookmark size={13} />
+                <span>Thư viện chữ đã lưu</span>
+                <span className={`text-[10px] px-1.5 py-0.2 rounded-full ${activeTab === 'saved' ? 'bg-indigo-700 text-white' : 'bg-indigo-100 text-indigo-800'}`}>
+                  {savedCharacters.length}
+                </span>
+              </button>
+            </div>
+
+            {activeTab === 'saved' && (
+              <div className="flex flex-wrap items-center gap-2">
+                {user ? (
+                  <div className="flex items-center gap-1 text-[11px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200/80 px-2.5 py-1 rounded-xl">
+                    <Cloud size={13} className="text-emerald-600 shrink-0" />
+                    <span className="hidden sm:inline">Firebase Cloud:</span>
+                    <span className="truncate max-w-[140px]">{user.email || 'Đã đồng bộ'}</span>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-1 text-[11px] font-bold text-amber-700 bg-amber-50 border border-amber-200/80 px-2.5 py-1 rounded-xl" title="Đăng nhập ở góc trên để tự động sao lưu Cloud vĩnh viễn">
+                    <Clock size={12} className="text-amber-600 shrink-0" />
+                    <span>Lưu máy này</span>
+                  </div>
+                )}
+
+                {user && savedCharacters.some(c => !c.userId || c.id?.startsWith('local_')) && (
+                  <button
+                    type="button"
+                    onClick={handleSyncToCloud}
+                    disabled={isSyncingCloud}
+                    className="flex items-center gap-1 px-2.5 py-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-[11px] font-bold rounded-xl border border-indigo-200 cursor-pointer transition-all shadow-xs"
+                    title="Đồng bộ các chữ đang lưu offline lên Firebase Cloud"
+                  >
+                    <CloudUpload size={12} />
+                    <span>{isSyncingCloud ? 'Đang đồng bộ...' : 'Đồng bộ Cloud'}</span>
+                  </button>
+                )}
+
+                {savedCharacters.length > 0 && (
+                  <div className="relative w-full sm:w-56">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={14} />
+                    <input
+                      type="text"
+                      placeholder="Lọc chữ, pinyin, nghĩa..."
+                      value={savedCharsFilter}
+                      onChange={(e) => setSavedCharsFilter(e.target.value)}
+                      className="w-full pl-8 pr-3 py-1 bg-white text-slate-800 text-xs font-semibold rounded-xl border border-slate-200 focus:outline-none focus:ring-1 focus:ring-indigo-500 shadow-xs"
+                    />
+                    {savedCharsFilter && (
+                      <button
+                        type="button"
+                        onClick={() => setSavedCharsFilter('')}
+                        className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                      >
+                        <X size={12} />
+                      </button>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
+
+          {/* Tab 1: Suggested Characters Content */}
+          {activeTab === 'suggested' && (
+            <div className="flex flex-wrap gap-2 animate-fade-in">
+              {SUGGESTED_CHARS.map((sc) => {
+                const isSaved = savedCharacters.some(c => c.character === sc.char);
+                const offlineData = savedCharacters.find(c => c.character === sc.char) || DEFAULT_OFFLINE_CHARACTERS[sc.char];
+                return (
+                  <button
+                    key={sc.char}
+                    onClick={() => handleSelectCharacter(sc.char, offlineData)}
+                    className={`px-3 py-2 rounded-xl text-sm font-bold border transition-all cursor-pointer flex items-center gap-1.5 ${
+                      selectedChar === sc.char
+                        ? 'bg-indigo-600 text-white border-indigo-600 shadow-md scale-105'
+                        : 'bg-white text-slate-700 border-slate-200/80 hover:border-indigo-300 hover:bg-slate-50'
+                    }`}
+                  >
+                    <span className="text-lg font-black">{sc.char}</span>
+                    <span className="text-[10px] opacity-80">({sc.sinoViet})</span>
+                    {isSaved && (
+                      <span className={`w-1.5 h-1.5 rounded-full ${selectedChar === sc.char ? 'bg-amber-300' : 'bg-indigo-500'}`} title="Đã lưu"></span>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+
+          {/* Tab 2: Saved Characters Content */}
+          {activeTab === 'saved' && (
+            <div className="animate-fade-in">
+              {savedCharacters.length === 0 ? (
+                <div className="bg-white/90 border border-dashed border-indigo-200 rounded-2xl p-6 text-center space-y-2">
+                  <div className="w-10 h-10 bg-indigo-50 text-indigo-600 rounded-full flex items-center justify-center mx-auto">
+                    <Bookmark size={20} />
+                  </div>
+                  <h3 className="text-sm font-bold text-slate-800">Chưa có chữ nào trong Thư viện đã lưu</h3>
+                  <p className="text-xs text-slate-500 max-w-md mx-auto">
+                    Khi bạn tìm kiếm bất kỳ chữ Hán nào và bấm <span className="font-bold text-amber-600">"Lưu chữ vào Thư viện"</span> (hoặc bật Tự động lưu ở trên), toàn bộ thông tin, bộ thủ, nét viết và từ ghép sẽ được lưu vĩnh viễn để bạn ôn tập bất cứ lúc nào mà không cần tìm lại.
+                  </p>
+                </div>
+              ) : filteredSavedChars.length === 0 ? (
+                <div className="bg-white rounded-2xl p-4 text-center text-xs text-slate-500">
+                  Không tìm thấy chữ nào khớp với từ khóa "{savedCharsFilter}".
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2.5 max-h-[280px] overflow-y-auto pr-1 custom-scrollbar">
+                  {filteredSavedChars.map((sc) => {
+                    const isSelected = selectedChar === sc.character;
+                    return (
+                      <div
+                        key={sc.id || sc.character}
+                        onClick={() => handleSelectCharacter(sc.character, sc)}
+                        className={`group relative p-2.5 rounded-2xl border transition-all cursor-pointer flex items-center justify-between gap-3 ${
+                          isSelected
+                            ? 'bg-indigo-600 text-white border-indigo-600 shadow-md ring-2 ring-indigo-300'
+                            : 'bg-white hover:bg-slate-50 text-slate-700 border-slate-200 hover:border-indigo-300 shadow-xs'
+                        }`}
+                      >
+                        <div className="flex items-center gap-2.5 min-w-0">
+                          <span className={`w-9 h-9 rounded-xl flex items-center justify-center text-xl font-black shrink-0 ${
+                            isSelected ? 'bg-white/20 text-white' : 'bg-indigo-50 text-indigo-900 border border-indigo-100'
+                          }`}>
+                            {sc.character}
+                          </span>
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-1">
+                              <span className="font-black text-xs truncate">
+                                {sc.sinoVietnamese}
+                              </span>
+                              <span className={`text-[10px] font-bold truncate ${isSelected ? 'text-indigo-200' : 'text-slate-400'}`}>
+                                ({sc.pinyin})
+                              </span>
+                            </div>
+                            <p className={`text-[10px] font-medium truncate max-w-[130px] ${isSelected ? 'text-indigo-100' : 'text-slate-500'}`}>
+                              {sc.vietnameseMeaning}
+                            </p>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          {sc.userId ? (
+                            <span title="Đã lưu trên Firebase Cloud" className={`text-[9px] font-black px-1.5 py-0.5 rounded flex items-center gap-0.5 ${
+                              isSelected ? 'bg-white/20 text-emerald-200' : 'bg-emerald-50 text-emerald-700 border border-emerald-100'
+                            }`}>
+                              <Cloud size={10} />
+                              <span className="hidden sm:inline">Cloud</span>
+                            </span>
+                          ) : (
+                            <span title="Lưu tạm trên máy (Offline)" className={`text-[9px] font-bold px-1.5 py-0.5 rounded flex items-center gap-0.5 ${
+                              isSelected ? 'bg-white/20 text-white' : 'bg-slate-100 text-slate-500'
+                            }`}>
+                              <Clock size={10} />
+                              <span className="hidden sm:inline">Máy</span>
+                            </span>
+                          )}
+                          <span className={`text-[9px] font-black px-1.5 py-0.5 rounded ${
+                            isSelected ? 'bg-white/20 text-white' : 'bg-slate-100 text-slate-600'
+                          }`}>
+                            {sc.totalStrokes} nét
+                          </span>
+                          <button
+                            type="button"
+                            onClick={(e) => handleDeleteSavedCharacter(sc, e)}
+                            className={`p-1.5 rounded-lg opacity-80 sm:opacity-0 group-hover:opacity-100 transition-all cursor-pointer ${
+                              isSelected ? 'hover:bg-white/20 text-white' : 'hover:bg-rose-50 text-slate-300 hover:text-rose-600'
+                            }`}
+                            title="Xóa chữ này khỏi thư viện"
+                          >
+                            <Trash2 size={13} />
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
         </div>
       </div>
 
@@ -588,14 +1148,43 @@ export default function SingleCharacterLearn() {
           </div>
         </div>
       ) : error ? (
-        <div className="bg-red-50 border-2 border-red-100 rounded-3xl p-6 text-center space-y-3 max-w-xl mx-auto">
-          <p className="text-red-700 font-bold text-base">{error}</p>
-          <button
-            onClick={() => setSelectedChar(selectedChar)}
-            className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white font-bold text-xs rounded-xl shadow-md transition-all cursor-pointer"
-          >
-            Thử lại
-          </button>
+        <div className="bg-amber-50/90 border-2 border-amber-200/90 rounded-3xl p-6 md:p-8 text-center space-y-4 max-w-xl mx-auto shadow-sm animate-fade-in">
+          <div className="w-14 h-14 bg-amber-100 text-amber-700 rounded-2xl flex items-center justify-center mx-auto shadow-xs">
+            <WifiOff size={28} />
+          </div>
+          <div className="space-y-1.5">
+            <h3 className="font-black text-amber-950 text-base md:text-lg">Không thể kết nối máy chủ AI lúc này</h3>
+            <p className="text-xs text-amber-800 leading-relaxed font-medium max-w-md mx-auto">
+              {error}
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center justify-center gap-2.5 pt-2">
+            <button
+              type="button"
+              onClick={() => setActiveTab('saved')}
+              className="px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 active:scale-95 text-white font-bold text-xs rounded-xl shadow-sm transition-all cursor-pointer flex items-center gap-1.5"
+            >
+              <Bookmark size={14} />
+              <span>Mở Thư viện đã lưu ({savedCharacters.length} chữ)</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => handleSelectCharacter('好', DEFAULT_OFFLINE_CHARACTERS['好'])}
+              className="px-4 py-2.5 bg-white hover:bg-amber-100/60 active:scale-95 text-amber-900 border border-amber-300 font-bold text-xs rounded-xl shadow-xs transition-all cursor-pointer"
+            >
+              Học chữ mẫu "好" có sẵn
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setError(null);
+                setSelectedChar(selectedChar);
+              }}
+              className="px-3.5 py-2.5 bg-amber-200/70 hover:bg-amber-200 text-amber-900 font-bold text-xs rounded-xl transition-all cursor-pointer"
+            >
+              Thử lại kết nối
+            </button>
+          </div>
         </div>
       ) : analysis ? (
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 md:gap-8">
@@ -1020,6 +1609,21 @@ export default function SingleCharacterLearn() {
             
             {/* Main Details Card */}
             <div className="bg-white rounded-3xl border border-slate-100 shadow-sm p-6 md:p-8 space-y-6">
+              {/* Cache hit indicator banner */}
+              {loadedFromCache && (
+                <div className="bg-gradient-to-r from-emerald-50 to-teal-50 border border-emerald-200/90 rounded-2xl p-3.5 flex items-center justify-between gap-3 text-xs font-bold text-emerald-800 animate-fade-in shadow-xs">
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <Sparkles size={18} className="text-emerald-600 shrink-0 animate-pulse" />
+                    <span className="truncate">
+                      Dữ liệu chữ "{analysis.character}" đã được nạp từ Thư viện lưu trữ — Đầy đủ thông tin, bộ thủ, nét bút và từ ghép.
+                    </span>
+                  </div>
+                  <span className="text-[10px] font-black uppercase tracking-wider bg-emerald-200/70 text-emerald-900 px-2 py-0.5 rounded-md shrink-0">
+                    Tải Tức Thì
+                  </span>
+                </div>
+              )}
+
               <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-6">
                 <div className="flex items-start gap-5">
                   {/* Oversized Character Graphic */}
@@ -1045,6 +1649,12 @@ export default function SingleCharacterLearn() {
                       <span className="text-[10px] font-black uppercase tracking-widest bg-amber-50 text-amber-700 border border-amber-100 px-2 py-0.5 rounded-md">
                         Hán-Việt: {analysis.sinoVietnamese}
                       </span>
+                      {isCurrentCharSaved && (
+                        <span className="text-[10px] font-black uppercase tracking-widest bg-emerald-50 text-emerald-700 border border-emerald-200 px-2 py-0.5 rounded-md flex items-center gap-1">
+                          {currentSavedRecord?.userId ? <Cloud size={11} className="text-emerald-600" /> : <CheckCircle2 size={11} className="text-emerald-600" />}
+                          {currentSavedRecord?.userId ? 'Đã lưu Cloud Firebase' : 'Đã lưu Thư viện'}
+                        </span>
+                      )}
                     </div>
                     
                     <h2 className="text-lg md:text-2xl font-black text-slate-800 leading-tight">
@@ -1059,8 +1669,46 @@ export default function SingleCharacterLearn() {
                   </div>
                 </div>
 
-                {/* Quick Download Buttons */}
+                {/* Quick Action Buttons: Save character, Video, Worksheet */}
                 <div className="flex sm:flex-col gap-2 shrink-0">
+                  {/* Save to Library Button */}
+                  {isCurrentCharSaved ? (
+                    <button
+                      type="button"
+                      onClick={() => currentSavedRecord && handleDeleteSavedCharacter(currentSavedRecord)}
+                      className="flex-1 sm:flex-initial px-3.5 py-2 bg-emerald-50 hover:bg-rose-50 text-emerald-700 hover:text-rose-600 font-bold text-xs rounded-xl border border-emerald-200 hover:border-rose-200 shadow-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer group"
+                      title="Nhấn để bỏ lưu chữ này khỏi Thư viện"
+                    >
+                      <CheckCircle2 size={14} className="group-hover:hidden text-emerald-600" />
+                      <Trash2 size={14} className="hidden group-hover:inline text-rose-500" />
+                      <span className="group-hover:hidden flex items-center gap-1">
+                        {currentSavedRecord?.userId ? <Cloud size={13} className="text-emerald-600" /> : null}
+                        <span>{currentSavedRecord?.userId ? 'Đã lưu Cloud' : 'Đã lưu Thư viện'}</span>
+                      </span>
+                      <span className="hidden group-hover:inline">Bỏ lưu chữ này</span>
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => handleSaveCharacter()}
+                      disabled={isSavingChar}
+                      className="flex-1 sm:flex-initial px-3.5 py-2 bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 active:scale-95 text-white font-black text-xs rounded-xl shadow-md transition-all flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
+                      title="Lưu toàn bộ thông tin chữ, bộ thủ và từ ghép lên Firebase Cloud & thiết bị để học bất cứ lúc nào"
+                    >
+                      {isSavingChar ? (
+                        <>
+                          <Loader2 className="animate-spin" size={14} />
+                          <span>Đang lưu...</span>
+                        </>
+                      ) : (
+                        <>
+                          <CloudUpload size={14} />
+                          <span>{user ? 'Lưu Cloud' : 'Lưu chữ này'}</span>
+                        </>
+                      )}
+                    </button>
+                  )}
+
                   <button
                     type="button"
                     onClick={handleExportVideo}

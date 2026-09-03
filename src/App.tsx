@@ -36,7 +36,8 @@ import {
   FileText,
   Download,
   FolderPlus,
-  Folder
+  Folder,
+  Mail
 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import { 
@@ -48,11 +49,13 @@ import {
   censorTargetWordTranslation 
 } from './services/geminiService';
 import SingleCharacterLearn from './components/SingleCharacterLearn';
+import { AttendanceTracker } from './components/AttendanceTracker';
 import LearnView from './components/LearnView';
 import SentenceFilterBar from './components/SentenceFilterBar';
 import { AssignSectionModal } from './components/AssignSectionModal';
 import { ReorderSectionSentencesModal } from './components/ReorderSectionSentencesModal';
 import { sortSectionSentences } from './utils/sentenceSort';
+import { segmentChineseSentence, createShuffledSegments } from './utils/sentenceSegmenter';
 import { 
   Category, 
   Vocabulary, 
@@ -62,7 +65,7 @@ import {
   ActiveViewType,
   TestType
 } from './types';
-import { exportLessonsToDocx, LessonDocxData } from './utils/docxExporter';
+import { exportLessonsToDocx, exportSectionToDocx, LessonDocxData } from './utils/docxExporter';
 import { 
   auth, 
   db, 
@@ -206,20 +209,25 @@ export default function App() {
   const [isCensoring, setIsCensoring] = useState(false);
   const [isNavMenuOpen, setIsNavMenuOpen] = useState(false);
   const navMenuRef = useRef<HTMLDivElement | null>(null);
+  const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
+  const userMenuRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
       if (navMenuRef.current && !navMenuRef.current.contains(event.target as Node)) {
         setIsNavMenuOpen(false);
       }
+      if (userMenuRef.current && !userMenuRef.current.contains(event.target as Node)) {
+        setIsUserMenuOpen(false);
+      }
     };
-    if (isNavMenuOpen) {
+    if (isNavMenuOpen || isUserMenuOpen) {
       document.addEventListener('mousedown', handleClickOutside);
     }
     return () => {
       document.removeEventListener('mousedown', handleClickOutside);
     };
-  }, [isNavMenuOpen]);
+  }, [isNavMenuOpen, isUserMenuOpen]);
 
   useEffect(() => {
     let active = true;
@@ -281,7 +289,8 @@ export default function App() {
   const [isExportingDocx, setIsExportingDocx] = useState(false);
   const [docxExportProgress, setDocxExportProgress] = useState(0);
   const [docxExportStatus, setDocxExportStatus] = useState('');
-  const [docxExportScope, setDocxExportScope] = useState<'current' | 'category' | 'all'>('current');
+  const [docxExportScope, setDocxExportScope] = useState<'current' | 'section' | 'category' | 'all'>('current');
+  const [docxTargetSectionId, setDocxTargetSectionId] = useState<string | null>(null);
   const [docxIncludeIllustrations, setDocxIncludeIllustrations] = useState(true);
   const [docxIncludeGrammar, setDocxIncludeGrammar] = useState(true);
   const [docxIncludeVariations, setDocxIncludeVariations] = useState(true);
@@ -291,6 +300,8 @@ export default function App() {
   // Study tracking state
   const [studySessions, setStudySessions] = useState<StudySession[]>([]);
   const [activeSecondsToday, setActiveSecondsToday] = useState(0);
+  const [isStudyClockRunning, setIsStudyClockRunning] = useState(false);
+  const [wasAutoPaused, setWasAutoPaused] = useState(false);
   const lastSavedDurationRef = useRef(0);
   const todaySessionExistsRef = useRef(false);
 
@@ -605,7 +616,7 @@ export default function App() {
     return parts;
   };
 
-  const handleExportLessonsToDocx = async (overrideScope?: 'current' | 'category' | 'all') => {
+  const handleExportLessonsToDocx = async (overrideScope?: 'current' | 'section' | 'category' | 'all') => {
     const scope = overrideScope || docxExportScope;
     setIsExportingDocx(true);
     setDocxExportProgress(5);
@@ -613,6 +624,77 @@ export default function App() {
     setDocxExportError(null);
 
     try {
+      if (scope === 'section') {
+        let targetSection: Section | undefined = undefined;
+        if (docxTargetSectionId) {
+          targetSection = sections.find(s => s.id === docxTargetSectionId);
+        }
+        if (!targetSection && selectedFilterSection !== 'all') {
+          targetSection = sections.find(s => s.id === selectedFilterSection);
+        }
+        if (!targetSection && learnSelectedSection !== 'all') {
+          targetSection = sections.find(s => s.id === learnSelectedSection);
+        }
+        if (!targetSection && result && 'sectionId' in result && (result as SavedSentence).sectionId) {
+          targetSection = sections.find(s => s.id === (result as SavedSentence).sectionId);
+        }
+        if (!targetSection && sections.length > 0) {
+          targetSection = sections[0];
+        }
+
+        if (!targetSection) {
+          throw new Error('Chưa có đoạn văn nào được chọn để xuất file Word. Vui lòng tạo hoặc chọn một đoạn văn.');
+        }
+
+        const sectionSentences = sortSectionSentences(
+          savedSentences.filter(s => s.sectionId === targetSection!.id)
+        );
+
+        if (sectionSentences.length === 0) {
+          throw new Error(`Đoạn văn "${targetSection.name}" chưa có câu thoại nào được lưu. Vui lòng gán các câu thoại vào đoạn văn này trước khi xuất.`);
+        }
+
+        const catName = categories.find(c => c.id === targetSection!.categoryId)?.name || 'Chung';
+
+        const { blob, filename } = await exportSectionToDocx(
+          targetSection,
+          sectionSentences.map(s => ({
+            ...s,
+            categoryName: catName,
+          })),
+          {
+            title: `TÀI LIỆU BÀI ĐỌC ĐOẠN VĂN: ${targetSection.name.toUpperCase()}`,
+            categoryName: catName,
+            includeIllustrations: docxIncludeIllustrations,
+            includeGrammar: docxIncludeGrammar,
+            includeVariations: docxIncludeVariations,
+            includePracticeGrid: docxIncludePracticeGrid,
+            onProgress: (percent, statusText) => {
+              setDocxExportProgress(percent);
+              setDocxExportStatus(statusText);
+            }
+          }
+        );
+
+        // Trigger browser download
+        const downloadUrl = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = downloadUrl;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(downloadUrl);
+
+        setTimeout(() => {
+          setIsExportingDocx(false);
+          setShowDocxExportModal(false);
+          setDocxExportProgress(0);
+          setDocxExportStatus('');
+        }, 700);
+        return;
+      }
+
       let targetLessons: LessonDocxData[] = [];
       let topicTitle = 'Học Tiếng Trung';
 
@@ -803,57 +885,26 @@ export default function App() {
       }
     }
     const randomSentence = sentence || pool[Math.floor(Math.random() * pool.length)];
+    if (sentence && sentence.categoryId) {
+      setWordOrderSelectedCategory(sentence.categoryId);
+    }
     setQuizSentence(randomSentence);
     
-    // Segment using vocab where possible
-    const sentenceVocab = vocabulary
-      .filter(v => v.sentenceId === randomSentence.id && v.type === 'word')
-      .map(v => v.word.trim())
-      .filter(word => word && randomSentence.chinese.includes(word));
+    // Smart segment into meaningful words, compound phrases, and collocations
+    const segments = segmentChineseSentence(
+      randomSentence.chinese,
+      randomSentence.id,
+      vocabulary,
+      randomSentence.pinyin
+    );
     
-    // Sort longer words first
-    sentenceVocab.sort((a, b) => b.length - a.length);
-    
-    // Clean punctuation
-    const puncs = /[。，！？、；：“”（）.,!? ]/g;
-    const cleanText = randomSentence.chinese.replace(puncs, '');
-    
-    if (cleanText.length === 0) {
+    if (segments.length === 0) {
       setError("Câu đã chọn không hợp lệ hoặc chỉ chứa dấu câu.");
       return;
     }
     
-    const segments: string[] = [];
-    let i = 0;
-    while (i < cleanText.length) {
-      let matched = false;
-      for (const word of sentenceVocab) {
-        if (cleanText.substring(i, i + word.length) === word) {
-          segments.push(word);
-          i += word.length;
-          matched = true;
-          break;
-        }
-      }
-      if (!matched) {
-        segments.push(cleanText[i]);
-        i++;
-      }
-    }
-    
     setWordOrderSegments(segments);
-    
-    const items = segments.map((text, idx) => ({ id: idx, text }));
-    let shuffled = [...items];
-    let attempts = 0;
-    while (attempts < 5) {
-      shuffled.sort(() => Math.random() - 0.5);
-      const isSame = shuffled.every((item, idx) => item.id === idx);
-      if (shuffled.length <= 1 || !isSame) {
-        break;
-      }
-      attempts++;
-    }
+    const shuffled = createShuffledSegments(segments);
     
     setShuffledSegments(shuffled);
     setSelectedSegmentIndices(Array(segments.length).fill(null));
@@ -1096,73 +1147,80 @@ export default function App() {
     return () => unsubscribe();
   }, [user]);
 
-  // Timer: increment study seconds locally every second
+  const saveStudyDurationToFirestore = async (overrideDuration?: number) => {
+    if (!user || !auth.currentUser) return;
+    const duration = typeof overrideDuration === 'number' ? overrideDuration : activeSecondsToday;
+    if (duration <= 0) return;
+    try {
+      const todayStr = getLocalDateString();
+      const docId = `${user.uid}_${todayStr}`;
+      const docRef = doc(db, 'study_sessions', docId);
+      await setDoc(docRef, {
+        userId: user.uid,
+        date: todayStr,
+        duration: duration,
+        updatedAt: serverTimestamp()
+      }, { merge: true });
+      lastSavedDurationRef.current = duration;
+    } catch (err) {
+      console.error("Error saving daily study activity:", err);
+    }
+  };
+
+  // Timer: increment study seconds locally every second ONLY when isStudyClockRunning is true
   useEffect(() => {
-    if (!user) return;
+    if (!user || !isStudyClockRunning) return;
 
     const interval = setInterval(() => {
       setActiveSecondsToday(prev => prev + 1);
     }, 1000);
 
     return () => clearInterval(interval);
-  }, [user]);
+  }, [user, isStudyClockRunning]);
 
-  // Sync study duration to Firestore (throttled every 15 seconds)
+  // Sync study duration to Firestore (throttled every 15 seconds while active)
   useEffect(() => {
     if (!user || activeSecondsToday === 0) return;
 
     if (activeSecondsToday - lastSavedDurationRef.current >= 15) {
-      const todayStr = getLocalDateString();
-      const docId = `${user.uid}_${todayStr}`;
-      
-      const saveDuration = async () => {
-        try {
-          if (!auth.currentUser) return;
-          const docRef = doc(db, 'study_sessions', docId);
-          await setDoc(docRef, {
-            userId: user.uid,
-            date: todayStr,
-            duration: activeSecondsToday,
-            updatedAt: serverTimestamp()
-          }, { merge: true });
-          lastSavedDurationRef.current = activeSecondsToday;
-        } catch (err) {
-          console.error("Error saving daily study activity:", err);
-        }
-      };
-
-      saveDuration();
+      saveStudyDurationToFirestore(activeSecondsToday);
     }
   }, [user, activeSecondsToday]);
 
-  // Save on component unmount or tab closing
+  // Auto-pause timer when tab/app is hidden or user exits/switches away
   useEffect(() => {
     if (!user) return;
 
-    return () => {
-      // If user has signed out in the meantime, avoid writing to Firestore (which would fail due to lacking auth credentials)
-      if (!auth.currentUser) return;
-
-      const currentSeconds = activeSecondsToday;
-      const lastSaved = lastSavedDurationRef.current;
-      if (currentSeconds > lastSaved) {
-        const todayStr = getLocalDateString();
-        const docId = `${user.uid}_${todayStr}`;
-        const docRef = doc(db, 'study_sessions', docId);
-        
-        setDoc(docRef, {
-          userId: user.uid,
-          date: todayStr,
-          duration: currentSeconds,
-          updatedAt: serverTimestamp()
-        }, { merge: true }).catch(e => {
-          if (e?.code !== 'permission-denied') {
-            console.error("Unmount save failed:", e);
-          }
-        });
+    const handleVisibilityChange = () => {
+      if (document.hidden || document.visibilityState === 'hidden') {
+        if (isStudyClockRunning) {
+          setIsStudyClockRunning(false);
+          setWasAutoPaused(true);
+          saveStudyDurationToFirestore(activeSecondsToday);
+        }
       }
     };
-  }, [user, activeSecondsToday]);
+
+    const handleExit = () => {
+      if (isStudyClockRunning) {
+        setIsStudyClockRunning(false);
+        saveStudyDurationToFirestore(activeSecondsToday);
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('pagehide', handleExit);
+    window.addEventListener('beforeunload', handleExit);
+
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('pagehide', handleExit);
+      window.removeEventListener('beforeunload', handleExit);
+      if (auth.currentUser && activeSecondsToday > lastSavedDurationRef.current) {
+        saveStudyDurationToFirestore(activeSecondsToday);
+      }
+    };
+  }, [user, isStudyClockRunning, activeSecondsToday]);
 
   const handleLogin = async () => {
     try {
@@ -1865,33 +1923,68 @@ export default function App() {
             <span className="text-[10px] font-black text-sleek-muted uppercase tracking-tighter">{user ? 'Lv. 12' : 'Guest'}</span>
           </div>
           
-          <div className="flex items-center gap-1 sm:gap-2 md:gap-4 shrink-0">
+          <div className="flex items-center gap-1.5 sm:gap-2.5 shrink-0">
             {user ? (
               <>
-                <div className="flex items-center gap-0.5 sm:gap-1 font-bold text-orange-500 text-xs sm:text-base">
-                  <Flame size={14} className="sm:w-5 sm:h-5 shrink-0" fill="currentColor" /> <span className="text-xs sm:text-sm">124</span>
-                </div>
-                <div className="w-7 h-7 sm:w-10 sm:h-10 rounded-full bg-slate-200 border-2 border-white shadow-sm overflow-hidden flex items-center justify-center cursor-pointer group relative">
-                  <img src={user.photoURL || `https://api.dicebear.com/7.x/avataaars/svg?seed=${user.uid}`} alt="Avatar" className="w-full h-full object-cover" />
-                  <div className="absolute top-full right-0 mt-2 hidden group-hover:block bg-white border border-sleek-border rounded-xl p-2 shadow-2xl min-w-[140px] z-50">
-                    <div className="px-3 py-2 border-b border-slate-50 mb-1">
-                      <p className="text-[10px] font-black text-slate-400 uppercase truncate">{user.displayName || 'Học viên'}</p>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setActiveView('progress');
+                    setTestType(null);
+                  }}
+                  className="flex items-center gap-0.5 sm:gap-1 font-bold text-orange-500 text-xs sm:text-base cursor-pointer hover:opacity-85 transition-opacity px-1 py-0.5 rounded-lg shrink-0"
+                  title="Xem chuyên cần & chuỗi ngày học"
+                >
+                  <Flame size={14} className="sm:w-5 sm:h-5 shrink-0" fill="currentColor" /> 
+                  <span className="text-xs sm:text-sm font-black">{calculateStudyStreak(studySessions, activeSecondsToday)}</span>
+                </button>
+
+                {/* User Account Badge with letter 'C' */}
+                <div className="relative shrink-0" ref={userMenuRef}>
+                  <button
+                    type="button"
+                    onClick={() => setIsUserMenuOpen(prev => !prev)}
+                    className="w-8 h-8 sm:w-9 sm:h-9 rounded-full bg-gradient-to-br from-indigo-500 to-indigo-700 text-white font-black text-sm sm:text-base flex items-center justify-center shadow-xs border-2 border-white hover:brightness-105 transition-all cursor-pointer select-none active:scale-95"
+                    title={user.email || 'Tài khoản người dùng'}
+                  >
+                    C
+                  </button>
+
+                  {/* Dropdown Menu when clicking letter C */}
+                  {isUserMenuOpen && (
+                    <div className="absolute top-full right-0 mt-2 bg-white border border-sleek-border rounded-2xl p-2.5 shadow-2xl min-w-[210px] max-w-[280px] z-50 animate-in fade-in zoom-in-95 duration-150">
+                      <div className="px-3 py-2 border-b border-slate-100 mb-1.5 flex items-center gap-2.5">
+                        <div className="w-8 h-8 rounded-full bg-indigo-600 text-white font-black flex items-center justify-center text-sm shrink-0">
+                          C
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <p className="text-[10px] font-black text-slate-400 uppercase tracking-wider">Tài khoản</p>
+                          <p className="text-xs font-bold text-slate-800 break-all truncate">{user.email || 'Học viên'}</p>
+                        </div>
+                      </div>
+                      <button 
+                        type="button"
+                        onClick={() => {
+                          setIsUserMenuOpen(false);
+                          handleLogout();
+                        }}
+                        className="w-full flex items-center gap-2 px-3 py-2 text-xs font-bold text-rose-600 hover:bg-rose-50 rounded-xl transition-colors cursor-pointer"
+                      >
+                        <LogOut size={14} /> Đăng xuất tài khoản
+                      </button>
                     </div>
-                    <button 
-                      onClick={handleLogout}
-                      className="w-full flex items-center gap-2 px-3 py-2 text-xs font-bold text-rose-500 hover:bg-rose-50 rounded-lg transition-colors"
-                    >
-                      <LogOut size={14} /> Đăng xuất
-                    </button>
-                  </div>
+                  )}
                 </div>
               </>
             ) : (
               <button 
+                type="button"
                 onClick={handleLogin}
-                className="flex items-center gap-1 px-2.5 py-1.5 sm:px-4 sm:py-2 bg-primary text-white font-bold rounded-xl hover:bg-primary-dark transition-colors text-xs sm:text-sm shrink-0"
+                className="flex items-center gap-1.5 px-2.5 py-1.5 sm:px-3.5 sm:py-2 bg-primary text-white font-bold rounded-xl hover:bg-primary-dark transition-all text-xs sm:text-sm shrink-0 shadow-xs cursor-pointer active:scale-95"
+                title="Đăng nhập tài khoản bằng Email"
               >
-                <LogIn size={13} /> <span className="font-bold">Đăng nhập</span>
+                <Mail size={13} className="shrink-0" /> 
+                <span className="font-bold whitespace-nowrap">Đăng nhập email</span>
               </button>
             )}
           </div>
@@ -1959,6 +2052,11 @@ export default function App() {
               setSelectedSection={setSelectedFilterSection}
               totalSentenceCount={savedSentences.length}
               onOpenReorderModal={(sec) => setReorderSectionTarget(sec)}
+              onExportSectionDocx={(sec) => {
+                setDocxTargetSectionId(sec.id);
+                setDocxExportScope('section');
+                setShowDocxExportModal(true);
+              }}
             />
 
             <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
@@ -2090,6 +2188,16 @@ export default function App() {
             getCategoryTheme={getCategoryTheme}
             onOpenAssignModal={(s) => setAssignSentenceTarget(s)}
             onOpenReorderModal={(sec) => setReorderSectionTarget(sec)}
+            onExportSectionDocx={(sec) => {
+              setDocxTargetSectionId(sec.id);
+              setDocxExportScope('section');
+              setShowDocxExportModal(true);
+            }}
+            vocabulary={vocabulary}
+            onStartWordOrderQuiz={(s) => {
+              startWordOrderQuiz(s);
+              window.scrollTo({ top: 0, behavior: 'smooth' });
+            }}
           />
         ) : activeView === 'admin' ? (
           /* ADMIN View */
@@ -2787,157 +2895,26 @@ export default function App() {
           </div>
         ) : activeView === 'progress' ? (
           /* Chuyên cần View */
-          <div className="space-y-6 md:space-y-8 animate-in fade-in duration-300">
-             {/* Header */}
-             <div className="bg-white p-6 md:p-8 rounded-[2rem] shadow-sm border border-slate-100 flex flex-col md:flex-row md:items-center justify-between gap-6">
-               <div className="space-y-1">
-                 <h1 className="text-2xl md:text-3xl font-black text-slate-800 tracking-tight flex items-center gap-3">
-                   <Flame className="text-orange-500 fill-orange-500/10" size={28} /> Theo dõi chuyên cần
-                 </h1>
-                 <p className="text-slate-500 text-sm md:text-base font-medium">Theo dõi thời gian học tập, giữ chuỗi ngày học liên tiếp và kiểm tra tiến trình bản thân.</p>
-               </div>
-               {user && (
-                 <div className="flex items-center gap-3 bg-orange-50 text-orange-600 px-5 py-3 rounded-2xl border border-orange-100/50">
-                    <Zap className="fill-orange-500 text-orange-500 shrink-0" size={24} />
-                    <div>
-                      <div className="text-xs font-black uppercase tracking-wider opacity-75 font-bold">Chuỗi hiện tại</div>
-                      <div className="text-lg font-black">{(() => {
-                        const streak = calculateStudyStreak(studySessions, activeSecondsToday);
-                        return `${streak} ngày liên tiếp`;
-                      })()}</div>
-                    </div>
-                 </div>
-               )}
-             </div>
-
-             {user ? (
-               <div className="bg-white rounded-[2rem] border border-slate-100 p-6 md:p-8 shadow-sm grid grid-cols-1 lg:grid-cols-3 gap-8">
-                 {/* Today's Stats & Ticker */}
-                 <div className="flex flex-col justify-between space-y-4">
-                   <div>
-                     <div className="flex items-center gap-2 mb-2">
-                       <div className="p-2 bg-emerald-50 text-emerald-600 rounded-xl">
-                         <BookOpen size={20} />
-                       </div>
-                       <h3 className="text-lg font-bold text-slate-800 tracking-tight">Học tập hôm nay</h3>
-                     </div>
-                     <p className="text-slate-400 text-xs font-semibold uppercase tracking-wider mb-4">Mục tiêu hằng ngày: ít nhất 30 phút</p>
-                     
-                     {/* Timer text */}
-                     <div className="space-y-1">
-                       <p className="text-3xl md:text-4xl font-extrabold text-slate-800 tracking-tight">
-                         {(() => {
-                           const mins = Math.floor(activeSecondsToday / 60);
-                           const secs = activeSecondsToday % 60;
-                           return `${mins} phút ${secs} giây`;
-                         })()}
-                       </p>
-                       <p className="text-sm font-semibold text-slate-500">
-                         {activeSecondsToday >= 1800 ? (
-                           <span className="text-emerald-600 flex items-center gap-1.5 font-bold">
-                             <Check size={16} /> Đạt mục tiêu học tập hôm nay! 🎉
-                           </span>
-                         ) : (
-                           <span className="text-slate-400">
-                             Cần {Math.ceil((1800 - activeSecondsToday) / 60)} phút nữa để đạt mục tiêu hằng ngày.
-                           </span>
-                         )}
-                       </p>
-                     </div>
-                   </div>
-
-                   {/* Elegant Progress Bar */}
-                   <div className="space-y-2 pt-2">
-                     <div className="flex justify-between items-center text-xs text-slate-500 font-bold">
-                       <span>Tiến trình</span>
-                       <span>{Math.min(100, Math.round((activeSecondsToday / 1800) * 100))}%</span>
-                     </div>
-                     <div className="w-full h-3 bg-slate-100 rounded-full overflow-hidden">
-                       <div 
-                         className="h-full bg-emerald-500 transition-all duration-300"
-                         style={{ width: `${Math.min(100, Math.round((activeSecondsToday / 1800) * 100))}%` }}
-                       />
-                     </div>
-                   </div>
-                 </div>
-
-                 {/* Consistency Flame (Streak tracker) */}
-                 <div className="flex flex-col justify-center items-center py-6 border-y lg:border-y-0 lg:border-x border-slate-150 border-dashed">
-                   <div className="relative mb-2">
-                     <div className="p-5 bg-orange-50 text-orange-500 rounded-[2rem] transition-transform hover:scale-110">
-                       <Flame size={48} className="fill-orange-500/20" />
-                     </div>
-                     <span className="absolute -top-1 -right-1 bg-amber-400 text-white p-1 rounded-full text-[10px]">
-                       <Zap size={10} className="fill-white" />
-                     </span>
-                   </div>
-                   
-                   <div className="text-center space-y-1 mt-2">
-                     <h4 className="text-sm font-black uppercase text-slate-400 tracking-wider">Chuỗi chuyên cần</h4>
-                     <p className="text-3xl font-black text-slate-800 tracking-tight">
-                       {(() => {
-                         const streak = calculateStudyStreak(studySessions, activeSecondsToday);
-                         return `${streak} ngày`;
-                       })()}
-                     </p>
-                     <p className="text-xs text-slate-400 max-w-[200px] font-medium mx-auto">Học tối thiểu 30 phút mỗi ngày để duy trì chuỗi học tập!</p>
-                   </div>
-                 </div>
-
-                 {/* Attendance History (Last 7 Days calendar squares) */}
-                 <div className="flex flex-col justify-between space-y-4">
-                   <div>
-                     <div className="flex items-center gap-2 mb-1">
-                       <h4 className="text-sm font-bold text-slate-800 tracking-tight">Nhật ký 7 ngày gần đây</h4>
-                       <span className="text-[10.5px] font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full">
-                         Duy trì đều đặn
-                       </span>
-                     </div>
-                     <p className="text-xs text-slate-400 font-medium">Theo dõi hoạt động hằng ngày để tự đánh giá nỗ lực tự học.</p>
-                   </div>
-
-                   {/* 7 Days tracker boxes */}
-                   <div className="grid grid-cols-7 gap-2 pt-2">
-                     {getDailyHistoryData().map((day, idx) => {
-                       let titleTip = `${day.label}: ${Math.floor(day.duration / 60)} phút học`;
-                       
-                       let colorClass = "bg-slate-50 border-slate-200/50 text-slate-400";
-                       if (day.duration > 0 && day.duration < 1800) {
-                         colorClass = "bg-amber-500/15 border-amber-300/60 text-amber-600";
-                       } else if (day.duration >= 1800) {
-                         colorClass = "bg-emerald-600 border-emerald-500 text-white";
-                       }
-                       
-                       return (
-                         <div 
-                           key={idx} 
-                           title={titleTip} 
-                           className={`flex flex-col items-center p-2 rounded-2xl border text-center transition-all hover:translate-y-[-2px] hover:shadow-md cursor-help ${colorClass}`}
-                         >
-                           <span className="text-[10px] font-black uppercase tracking-wider">{day.dayOfWeek}</span>
-                           <div className="my-1.5 font-bold text-xs">{day.label.split('/')[0]}</div>
-                           
-                           <div className={`w-1.5 h-1.5 rounded-full ${day.isGoalMet ? 'bg-white' : day.duration > 0 ? 'bg-amber-500' : 'bg-slate-300'}`} />
-                           
-                           <span className="text-[9px] font-semibold mt-1 opacity-85">{Math.floor(day.duration / 60)}p</span>
-                         </div>
-                       );
-                     })}
-                   </div>
-                 </div>
-               </div>
-             ) : (
-               <div className="py-20 text-center bg-white rounded-[3rem] border border-slate-100 shadow-sm max-w-xl mx-auto space-y-4">
-                 <div className="w-16 h-16 bg-slate-50 text-slate-400 rounded-full flex items-center justify-center mx-auto mb-4">
-                   <Lock size={32} />
-                 </div>
-                 <h2 className="text-xl font-bold text-slate-800">Yêu cầu đăng nhập</h2>
-                 <p className="text-sm text-slate-500 px-8">Vui lòng đăng nhập tài khoản của bạn để bắt đầu tính thời gian học và lưu tích lũy ngày chuyên cần.</p>
-               </div>
-             )}
-          </div>
+          <AttendanceTracker
+            user={user}
+            activeSecondsToday={activeSecondsToday}
+            setActiveSecondsToday={setActiveSecondsToday}
+            isTimerRunning={isStudyClockRunning}
+            setIsTimerRunning={setIsStudyClockRunning}
+            wasAutoPaused={wasAutoPaused}
+            setWasAutoPaused={setWasAutoPaused}
+            studySessions={studySessions}
+            calculateStudyStreak={calculateStudyStreak}
+            getDailyHistoryData={getDailyHistoryData}
+            onSaveDurationNow={async () => {
+              await saveStudyDurationToFirestore(activeSecondsToday);
+            }}
+            onNavigateToLearn={() => {
+              setActiveView('learn');
+            }}
+          />
         ) : activeView === 'single-char' ? (
-          <SingleCharacterLearn />
+          <SingleCharacterLearn user={user} />
         ) : (
           /* Test Center View */
           <div className="max-w-4xl mx-auto w-full">
@@ -4512,6 +4489,7 @@ export default function App() {
                     Phạm vi bài học tải về:
                   </label>
                   <div className="grid grid-cols-1 gap-2">
+                    {/* Option 1: Current Sentence */}
                     <button
                       type="button"
                       disabled={isExportingDocx || !result}
@@ -4534,6 +4512,66 @@ export default function App() {
                       {docxExportScope === 'current' && <Check size={16} className="text-blue-600" />}
                     </button>
 
+                    {/* Option 2: Entire Section / Đoạn văn */}
+                    {sections.length > 0 && (
+                      <div className={`p-3 rounded-2xl border transition-all ${
+                        docxExportScope === 'section'
+                          ? 'border-indigo-600 bg-indigo-50/70 text-indigo-950 font-bold shadow-xs'
+                          : 'border-slate-200 bg-slate-50/50 hover:bg-slate-50 text-slate-700'
+                      }`}>
+                        <div 
+                          className="flex items-center justify-between cursor-pointer"
+                          onClick={() => setDocxExportScope('section')}
+                        >
+                          <div className="flex items-center gap-3">
+                            <span className="text-base">📑</span>
+                            <div>
+                              <div className="flex items-center gap-2">
+                                <p className="text-xs font-bold text-indigo-900">
+                                  Cả 1 đoạn văn (kèm bài đọc toàn văn & ảnh minh họa)
+                                </p>
+                                <span className="text-[9px] font-black uppercase px-2 py-0.5 rounded-full bg-indigo-200/80 text-indigo-800">
+                                  Hot ⭐
+                                </span>
+                              </div>
+                              <p className="text-[10px] text-slate-500 font-normal mt-0.5">
+                                Xuất toàn bộ các câu thoại theo thứ tự ngữ cảnh, bảng song ngữ đối chiếu và thẻ học chi tiết.
+                              </p>
+                            </div>
+                          </div>
+                          {docxExportScope === 'section' && <Check size={16} className="text-indigo-600 shrink-0 ml-2" />}
+                        </div>
+
+                        {/* Section Selector dropdown if section scope is active or available */}
+                        {docxExportScope === 'section' && (
+                          <div className="mt-2.5 pt-2.5 border-t border-indigo-200/60 flex items-center gap-2">
+                            <span className="text-[11px] font-bold text-indigo-700 shrink-0">Chọn đoạn:</span>
+                            <select
+                              value={
+                                docxTargetSectionId || 
+                                (selectedFilterSection !== 'all' ? selectedFilterSection : 
+                                  (learnSelectedSection !== 'all' ? learnSelectedSection : 
+                                    (result && 'sectionId' in result && (result as SavedSentence).sectionId ? (result as SavedSentence).sectionId : sections[0]?.id)))
+                              }
+                              onChange={(e) => setDocxTargetSectionId(e.target.value)}
+                              disabled={isExportingDocx}
+                              className="text-xs font-bold bg-white text-slate-800 border border-indigo-300 rounded-lg px-2.5 py-1 w-full focus:outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer"
+                            >
+                              {sections.map((sec) => {
+                                const count = savedSentences.filter(s => s.sectionId === sec.id).length;
+                                return (
+                                  <option key={sec.id} value={sec.id}>
+                                    {sec.name} ({count} câu thoại)
+                                  </option>
+                                );
+                              })}
+                            </select>
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Option 3: Category */}
                     <button
                       type="button"
                       disabled={isExportingDocx}
@@ -4556,6 +4594,7 @@ export default function App() {
                       {docxExportScope === 'category' && <Check size={16} className="text-blue-600" />}
                     </button>
 
+                    {/* Option 4: All */}
                     <button
                       type="button"
                       disabled={isExportingDocx}
@@ -4708,6 +4747,11 @@ export default function App() {
         section={reorderSectionTarget}
         sentences={savedSentences}
         onSaveOrder={handleReorderSectionSentences}
+        onExportWord={(sec) => {
+          setDocxTargetSectionId(sec.id);
+          setDocxExportScope('section');
+          setShowDocxExportModal(true);
+        }}
       />
 
       {/* Mobile Compact Bottom Navigation Bar */}

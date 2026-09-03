@@ -82,6 +82,22 @@ service cloud.firestore {
         && (data.duration is number && data.duration >= 0);
     }
 
+    function isValidSavedCharacter(data) {
+      return data.keys().hasAll(['character', 'pinyin', 'sinoVietnamese', 'vietnameseMeaning', 'totalStrokes', 'radicals', 'composition', 'examples', 'userId', 'createdAt'])
+        && (data.keys().size() >= 10 && data.keys().size() <= 13)
+        && data.character is string && data.character.size() <= 20
+        && data.pinyin is string && data.pinyin.size() <= 100
+        && data.sinoVietnamese is string && data.sinoVietnamese.size() <= 100
+        && data.vietnameseMeaning is string && data.vietnameseMeaning.size() <= 500
+        && (data.totalStrokes is number && data.totalStrokes >= 1 && data.totalStrokes <= 100)
+        && (data.get('strokeSequenceInstructions', []) is list)
+        && (data.radicals is list && data.radicals.size() <= 20)
+        && data.composition is string && data.composition.size() <= 5000
+        && (data.examples is list && data.examples.size() <= 30)
+        && data.userId is string && data.userId == request.auth.uid
+        && (data.get('note', '') == '' || (data.note is string && data.note.size() <= 2000));
+    }
+
     match /saved_sentences/{sentenceId} {
       allow create: if isVerified() && isValidSavedSentence(incoming()) && incoming().createdAt == request.time;
       allow update: if isVerified() && isOwner(existing().userId) 
@@ -139,6 +155,20 @@ service cloud.firestore {
                     && isValidStudySession(incoming())
                     && incoming().userId == existing().userId
                     && incoming().date == existing().date;
+      allow get: if isOwner(existing().userId);
+      allow list: if isOwner(resource.data.userId);
+      allow delete: if isOwner(existing().userId);
+    }
+
+    match /saved_characters/{characterId} {
+      allow create: if isVerified() && isValidSavedCharacter(incoming()) && incoming().createdAt == request.time;
+      allow update: if isVerified() && isOwner(existing().userId)
+                    && isValidSavedCharacter(incoming())
+                    && incoming().createdAt == existing().createdAt
+                    && incoming().userId == existing().userId
+                    && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+                      'vietnameseMeaning', 'pinyin', 'sinoVietnamese', 'composition', 'radicals', 'examples', 'strokeSequenceInstructions', 'totalStrokes', 'note'
+                    ]);
       allow get: if isOwner(existing().userId);
       allow list: if isOwner(resource.data.userId);
       allow delete: if isOwner(existing().userId);

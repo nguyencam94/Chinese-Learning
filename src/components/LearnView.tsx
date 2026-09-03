@@ -26,7 +26,7 @@ import {
   ArrowUpDown,
   Star
 } from 'lucide-react';
-import { Category, Section, SavedSentence } from '../types';
+import { Category, Section, SavedSentence, Vocabulary } from '../types';
 import { 
   TranslationResult, 
   generateRealisticIllustration, 
@@ -35,6 +35,7 @@ import {
 import { doc, updateDoc } from 'firebase/firestore';
 import { db, handleFirestoreError, OperationType, User } from '../lib/firebase';
 import { sortSectionSentences } from '../utils/sentenceSort';
+import QuickWordOrderQuiz from './QuickWordOrderQuiz';
 
 interface LearnViewProps {
   result: TranslationResult | null;
@@ -42,6 +43,7 @@ interface LearnViewProps {
   savedSentences: SavedSentence[];
   categories: Category[];
   sections: Section[];
+  vocabulary?: Vocabulary[];
   user: User | null;
   learnSelectedCategory: string;
   setLearnSelectedCategory: (cat: string) => void;
@@ -55,12 +57,14 @@ interface LearnViewProps {
   handleSpeak: (text: string, slow?: boolean) => void;
   setSelectedIllustrationModal: (res: TranslationResult | null) => void;
   setShowDocxExportModal: (show: boolean) => void;
-  setDocxExportScope: (scope: 'current' | 'category' | 'all') => void;
+  setDocxExportScope: (scope: 'current' | 'section' | 'category' | 'all') => void;
   renderHighlightedChinese: (chinese: string, sentenceId?: string) => React.ReactNode;
   getDifficultyTranslation: (difficulty?: string) => { label: string; color: string };
   getCategoryTheme: (categoryId?: string, categoriesList?: Category[]) => any;
   onOpenAssignModal?: (sentence: SavedSentence) => void;
   onOpenReorderModal?: (section: Section) => void;
+  onExportSectionDocx?: (section: Section) => void;
+  onStartWordOrderQuiz?: (sentence: SavedSentence) => void;
 }
 
 export default function LearnView({
@@ -69,6 +73,7 @@ export default function LearnView({
   savedSentences,
   categories,
   sections,
+  vocabulary = [],
   user,
   learnSelectedCategory,
   setLearnSelectedCategory,
@@ -88,6 +93,8 @@ export default function LearnView({
   getCategoryTheme,
   onOpenAssignModal,
   onOpenReorderModal,
+  onExportSectionDocx,
+  onStartWordOrderQuiz,
 }: LearnViewProps) {
   const [isLearnSettingsOpen, setIsLearnSettingsOpen] = useState(false);
   const [hidePinyin, setHidePinyin] = useState(true);
@@ -194,17 +201,33 @@ export default function LearnView({
               <strong className="font-bold">{activeSectionName}</strong>
             </span>
 
-            {/* Reorder Button if a section is active */}
-            {activeSectionObj && onOpenReorderModal && (
-              <button
-                type="button"
-                onClick={() => onOpenReorderModal(activeSectionObj)}
-                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-xl bg-amber-50 text-amber-800 border border-amber-200 text-[11px] font-black hover:bg-amber-100 transition-all cursor-pointer shadow-xs"
-                title="Sắp xếp thứ tự các câu trong đoạn này (đặt câu chủ đề, đổi vị trí...)"
-              >
-                <ArrowUpDown size={12} className="text-amber-600" />
-                <span>Sắp xếp câu trong đoạn</span>
-              </button>
+            {/* Reorder & Export Section Buttons if a section is active */}
+            {activeSectionObj && (
+              <div className="inline-flex items-center gap-1.5">
+                {onExportSectionDocx && (
+                  <button
+                    type="button"
+                    onClick={() => onExportSectionDocx(activeSectionObj)}
+                    className="inline-flex items-center gap-1 px-2.5 py-1 rounded-xl bg-blue-50 text-blue-800 border border-blue-200 text-[11px] font-black hover:bg-blue-100 transition-all cursor-pointer shadow-xs active:scale-95"
+                    title="Tải toàn bộ đoạn văn này dạng Word (.docx) kèm ảnh minh họa 16:9 và bài đọc toàn văn"
+                  >
+                    <FileDown size={12} className="text-blue-600" />
+                    <span>Xuất Word Cả Đoạn</span>
+                  </button>
+                )}
+
+                {onOpenReorderModal && (
+                  <button
+                    type="button"
+                    onClick={() => onOpenReorderModal(activeSectionObj)}
+                    className="inline-flex items-center gap-1 px-2.5 py-1 rounded-xl bg-amber-50 text-amber-800 border border-amber-200 text-[11px] font-black hover:bg-amber-100 transition-all cursor-pointer shadow-xs"
+                    title="Sắp xếp thứ tự các câu trong đoạn này (đặt câu chủ đề, đổi vị trí...)"
+                  >
+                    <ArrowUpDown size={12} className="text-amber-600" />
+                    <span>Sắp xếp câu trong đoạn</span>
+                  </button>
+                )}
+              </div>
             )}
 
             {/* Difficulty badge */}
@@ -496,7 +519,23 @@ export default function LearnView({
                       );
                     })()}
                   </div>
-                  <p className="text-xs text-slate-400 truncate">{s.meaning}</p>
+                  <div className="flex items-center justify-between gap-2 mt-1.5">
+                    <p className="text-xs text-slate-400 truncate flex-1">{s.meaning}</p>
+                    {onStartWordOrderQuiz && (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onStartWordOrderQuiz(s);
+                        }}
+                        className="flex items-center gap-1 px-2 py-0.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-[10px] font-black rounded-lg border border-indigo-200/80 transition-all cursor-pointer shrink-0 active:scale-95 shadow-xs"
+                        title="Bắt đầu bài tập sắp xếp trật tự câu này ngay"
+                      >
+                        <Zap size={10} className="text-indigo-600 fill-indigo-600/30" />
+                        <span>Xếp từ ➔</span>
+                      </button>
+                    )}
+                  </div>
                 </div>
               </div>
             ))}
@@ -556,7 +595,20 @@ export default function LearnView({
                             </span>
                           )}
 
-                          {/* Word Export Button */}
+                          {/* Quick link to Practice Center Word Order Quiz */}
+                      {onStartWordOrderQuiz && 'id' in result && (
+                        <button
+                          type="button"
+                          onClick={() => onStartWordOrderQuiz(result as SavedSentence)}
+                          className="flex items-center gap-1.5 px-2.5 py-1 bg-gradient-to-r from-indigo-50 to-blue-50 hover:from-indigo-100 hover:to-blue-100 text-indigo-700 font-extrabold rounded-lg text-[11px] border border-indigo-200/80 transition-all cursor-pointer shadow-xs active:scale-95 shrink-0"
+                          title="Chuyển nhanh đến bài tập sắp xếp trật tự câu này trong phần Luyện tập"
+                        >
+                          <Zap size={12} className="text-indigo-600 fill-indigo-600/30" />
+                          <span>Luyện trật tự câu ➔</span>
+                        </button>
+                      )}
+
+                      {/* Word Export Button */}
                           <button 
                             type="button"
                             onClick={() => {
@@ -859,6 +911,16 @@ export default function LearnView({
                       </div>
                     </div>
 
+                    {/* Kiểm tra nhanh trí nhớ: Bài tập điền trật tự từ */}
+                    {'id' in result && (
+                      <QuickWordOrderQuiz
+                        sentence={result as SavedSentence}
+                        vocabulary={vocabulary}
+                        onJumpToPractice={onStartWordOrderQuiz}
+                        onSpeak={handleSpeak}
+                      />
+                    )}
+
                     {/* Ghi chú học tập / Mẫu câu thích */}
                     <div className="sleek-card bg-gradient-to-br from-amber-50/20 to-white transition-all shadow-md border border-amber-100/50 relative overflow-hidden">
                       <div className="absolute -top-12 -right-12 w-24 h-24 bg-amber-500/5 rounded-full"></div>
@@ -1088,6 +1150,22 @@ export default function LearnView({
                   >
                     Tiếp →
                   </button>
+
+                  {onStartWordOrderQuiz && 'id' in result && (
+                    <>
+                      <div className="w-px h-4 sm:h-5 bg-slate-200 shrink-0" />
+                      <button
+                        type="button"
+                        onClick={() => onStartWordOrderQuiz(result as SavedSentence)}
+                        title="Chuyển nhanh đến bài tập sắp xếp trật tự câu này trong phần Luyện tập"
+                        className="flex items-center gap-1.5 px-3 sm:px-4 py-2 text-[10px] sm:text-xs font-black uppercase tracking-wide text-indigo-700 bg-indigo-50 hover:bg-indigo-600 hover:text-white rounded-full transition-all duration-200 border border-indigo-200/80 cursor-pointer shrink-0 shadow-xs"
+                      >
+                        <Zap size={12} />
+                        <span className="hidden sm:inline">Luyện trật tự từ</span>
+                        <span className="sm:hidden">Xếp từ</span>
+                      </button>
+                    </>
+                  )}
                 </div>
               </>
             );

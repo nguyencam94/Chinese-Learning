@@ -14,7 +14,8 @@ import {
   Layers,
   RotateCcw,
   Eye,
-  FileText
+  FileText,
+  FileDown
 } from 'lucide-react';
 import { Section, SavedSentence, Category } from '../types';
 import { sortSectionSentences } from '../utils/sentenceSort';
@@ -27,6 +28,7 @@ interface ReorderSectionSentencesModalProps {
   sentences: SavedSentence[];
   onSaveOrder: (sectionId: string, orderedSentenceIds: string[]) => Promise<void>;
   onSpeak?: (text: string, lang?: string) => void;
+  onExportWord?: (section: Section) => void;
 }
 
 export const ReorderSectionSentencesModal: React.FC<ReorderSectionSentencesModalProps> = ({
@@ -36,7 +38,8 @@ export const ReorderSectionSentencesModal: React.FC<ReorderSectionSentencesModal
   category,
   sentences,
   onSaveOrder,
-  onSpeak
+  onSpeak,
+  onExportWord
 }) => {
   const [orderedList, setOrderedList] = useState<SavedSentence[]>([]);
   const [isSaving, setIsSaving] = useState(false);
@@ -404,7 +407,19 @@ export const ReorderSectionSentencesModal: React.FC<ReorderSectionSentencesModal
               )}
             </div>
 
-            <div className="flex gap-2">
+            <div className="flex items-center gap-2">
+              {onExportWord && (
+                <button
+                  type="button"
+                  onClick={() => onExportWord(section)}
+                  className="px-3.5 py-2.5 bg-blue-50 hover:bg-blue-100 text-blue-700 text-xs font-bold rounded-xl border border-blue-200 transition-all flex items-center gap-1.5 cursor-pointer shadow-xs active:scale-95"
+                  title="Xuất file Word (.docx) cho cả đoạn văn này với thứ tự hiện tại và ảnh minh họa"
+                >
+                  <FileDown size={14} className="text-blue-600" />
+                  <span>Xuất Word</span>
+                </button>
+              )}
+
               <button
                 type="button"
                 onClick={onClose}

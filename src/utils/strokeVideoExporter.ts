@@ -1,5 +1,6 @@
 import HanziWriter from 'hanzi-writer';
 import { CharacterAnalysisResult } from '../services/geminiService';
+import { getCharacterStrokeData } from './hanziLoader';
 
 export type StrokeStyleType = 'slender' | 'medium' | 'kaiti';
 
@@ -344,12 +345,12 @@ export async function recordStrokeVideo(
 
   onProgress?.(15, `Đang nạp dữ liệu bút thuận chữ "${character}"...`);
 
-  // Load HanziWriter character data containing stroke outlines & medians
+  // Load HanziWriter character data containing stroke outlines & medians (cached for offline support)
   let charData: any = null;
   try {
-    charData = await HanziWriter.loadCharacterData(character);
+    charData = await getCharacterStrokeData(character);
   } catch (err: any) {
-    throw new Error(`Không thể nạp dữ liệu nét chữ cho "${character}". Vui lòng thử lại.`);
+    throw new Error(`Không thể nạp dữ liệu nét chữ cho "${character}". Vui lòng kiểm tra lại kết nối.`);
   }
 
   if (!charData || !charData.medians || charData.medians.length === 0) {
@@ -612,10 +613,10 @@ export async function generateHandwritingWorksheet(
     throw new Error('Không thể khởi tạo Canvas đồ họa.');
   }
 
-  // Load HanziWriter character data for stroke order steps
+  // Load HanziWriter character data for stroke order steps (cached for offline support)
   let charData: any = null;
   try {
-    charData = await HanziWriter.loadCharacterData(character);
+    charData = await getCharacterStrokeData(character);
   } catch (err) {
     console.warn("Could not load full HanziWriter stroke data:", err);
   }

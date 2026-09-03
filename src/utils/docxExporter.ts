@@ -27,6 +27,9 @@ export interface LessonDocxData extends TranslationResult {
   categoryName?: string;
   difficulty?: string;
   note?: string;
+  realisticIllustration?: string;
+  orderIndex?: number;
+  sectionId?: string;
 }
 
 export interface ExportDocxOptions {
@@ -38,6 +41,11 @@ export interface ExportDocxOptions {
   includeGrammar?: boolean;
   includePracticeGrid?: boolean;
   onProgress?: (percent: number, statusText: string) => void;
+}
+
+export interface SectionDocxOptions extends ExportDocxOptions {
+  sectionName?: string;
+  categoryName?: string;
 }
 
 /**
@@ -222,8 +230,9 @@ async function createLessonSection(
   elements.push(charCardTable);
 
   // 16:9 Illustration Image (if available & enabled)
-  if (includeIllustrations && lesson.illustrationSvg) {
-    const pngBuffer = await convertImageToPngBuffer(lesson.illustrationSvg);
+  const imageSource = lesson.realisticIllustration || lesson.illustrationSvg;
+  if (includeIllustrations && imageSource) {
+    const pngBuffer = await convertImageToPngBuffer(imageSource);
     if (pngBuffer) {
       elements.push(
         new Paragraph({
@@ -663,6 +672,417 @@ export async function exportLessonsToDocx(
   const filename = `ZhongWenGo_BaiHoc_${cleanTitle || 'TiengTrung'}.docx`;
 
   onProgress?.(100, 'Tải bài học thành công!');
+  return { blob, filename };
+}
+
+/**
+ * Exports an entire Section / Paragraph containing multiple dialogue sentences into a Microsoft Word Document (.docx)
+ * Includes:
+ * 1. Document Header & Section Metadata
+ * 2. Continuous Full-Paragraph Reading Passage (Combined Chinese, Pinyin, and Vietnamese)
+ * 3. Bilingual Comparison & Summary Table for all sentences in the section
+ * 4. In-depth Sentence Cards with 16:9 High-Res Illustrations, Grammar Explanations, Variations, and Writing Grids
+ */
+export async function exportSectionToDocx(
+  section: { id?: string; name: string; categoryId?: string },
+  sentences: LessonDocxData[],
+  options: SectionDocxOptions = {}
+): Promise<{ blob: Blob; filename: string }> {
+  const {
+    title,
+    author = 'ZhongWenGo - Học Tiếng Trung Chuyên Sâu',
+    categoryName = 'Chung',
+    onProgress
+  } = options;
+
+  const sectionTitle = section.name || 'Đoạn văn';
+  const docTitle = title || `TÀI LIỆU BÀI ĐỌC ĐOẠN VĂN: ${sectionTitle.toUpperCase()}`;
+
+  onProgress?.(10, `Khởi tạo tài liệu Word cho đoạn văn "${sectionTitle}"...`);
+
+  const docChildren: (Paragraph | Table)[] = [];
+
+  // 1. Header Banner / Cover
+  docChildren.push(
+    new Paragraph({
+      alignment: AlignmentType.CENTER,
+      spacing: { before: 200, after: 100 },
+      children: [
+        new TextRun({
+          text: docTitle,
+          bold: true,
+          size: 38, // 19pt
+          color: '1E3A8A', // Deep Indigo
+          font: 'Arial'
+        }),
+      ],
+    }),
+    new Paragraph({
+      alignment: AlignmentType.CENTER,
+      spacing: { before: 0, after: 240 },
+      children: [
+        new TextRun({
+          text: `Chủ đề: ${categoryName}  |  Đoạn văn: ${sectionTitle}  |  Tổng số: ${sentences.length} câu thoại  |  Ngày xuất: ${new Date().toLocaleDateString('vi-VN')}`,
+          bold: true,
+          size: 20,
+          color: '475569',
+          font: 'Arial'
+        }),
+      ],
+    })
+  );
+
+  // 2. PHẦN 1: BÀI ĐỌC TOÀN VĂN ĐOẠN VĂN LIỀN MẠCH (Continuous Paragraph Reading)
+  docChildren.push(
+    new Paragraph({
+      heading: HeadingLevel.HEADING_1,
+      spacing: { before: 240, after: 140 },
+      children: [
+        new TextRun({
+          text: 'I. BÀI ĐỌC ĐOẠN VĂN HOÀN CHỈNH (LIỀN MẠCH)',
+          bold: true,
+          size: 26,
+          color: '1E3A8A',
+          font: 'Arial'
+        }),
+      ],
+    }),
+    new Paragraph({
+      spacing: { before: 0, after: 140 },
+      children: [
+        new TextRun({
+          text: 'Toàn bộ các câu thoại được kết nối liền mạch thành bài đọc hoàn chỉnh:',
+          italics: true,
+          size: 20,
+          color: '64748B',
+          font: 'Arial'
+        }),
+      ],
+    })
+  );
+
+  // Generate continuous texts
+  const fullChinese = sentences.map(s => s.chinese.trim()).join(' ');
+  const fullPinyin = sentences.map(s => s.pinyin.trim()).join(' ');
+  const fullMeaning = sentences
+    .map(s => s.meaning.trim().replace(/[.!?]$/, ''))
+    .join('. ') + (sentences.length > 0 ? '.' : '');
+
+  // Continuous Reading Box Table
+  const passageTable = new Table({
+    width: { size: 100, type: WidthType.PERCENTAGE },
+    borders: {
+      top: { style: BorderStyle.SINGLE, size: 8, color: '3B82F6' },
+      bottom: { style: BorderStyle.SINGLE, size: 8, color: '3B82F6' },
+      left: { style: BorderStyle.SINGLE, size: 24, color: '2563EB' },
+      right: { style: BorderStyle.SINGLE, size: 8, color: '3B82F6' },
+    },
+    rows: [
+      new TableRow({
+        children: [
+          new TableCell({
+            width: { size: 100, type: WidthType.PERCENTAGE },
+            shading: { type: ShadingType.CLEAR, fill: 'F8FAFC' },
+            margins: {
+              top: convertInchesToTwip(0.16),
+              bottom: convertInchesToTwip(0.16),
+              left: convertInchesToTwip(0.2),
+              right: convertInchesToTwip(0.2),
+            },
+            children: [
+              new Paragraph({
+                spacing: { before: 60, after: 80 },
+                children: [
+                  new TextRun({
+                    text: '📖 BÀI ĐỌC TIẾNG TRUNG:',
+                    bold: true,
+                    size: 20,
+                    color: '1E3A8A',
+                    font: 'Arial'
+                  }),
+                ],
+              }),
+              new Paragraph({
+                spacing: { before: 0, after: 120 },
+                children: [
+                  new TextRun({
+                    text: fullChinese,
+                    bold: true,
+                    size: 30, // 15pt
+                    color: '0F172A',
+                    font: 'Microsoft YaHei'
+                  }),
+                ],
+              }),
+              new Paragraph({
+                spacing: { before: 60, after: 60 },
+                children: [
+                  new TextRun({
+                    text: '🔤 PHIÊN ÂM PINYIN TOÀN ĐOẠN:',
+                    bold: true,
+                    size: 20,
+                    color: '059669',
+                    font: 'Arial'
+                  }),
+                ],
+              }),
+              new Paragraph({
+                spacing: { before: 0, after: 120 },
+                children: [
+                  new TextRun({
+                    text: fullPinyin,
+                    italics: true,
+                    size: 22, // 11pt
+                    color: '047857',
+                    font: 'Arial'
+                  }),
+                ],
+              }),
+              new Paragraph({
+                spacing: { before: 60, after: 60 },
+                children: [
+                  new TextRun({
+                    text: '🇻🇳 DỊCH NGHĨA TOÀN ĐOẠN VĂN:',
+                    bold: true,
+                    size: 20,
+                    color: 'B45309',
+                    font: 'Arial'
+                  }),
+                ],
+              }),
+              new Paragraph({
+                spacing: { before: 0, after: 60 },
+                children: [
+                  new TextRun({
+                    text: fullMeaning,
+                    bold: true,
+                    size: 22,
+                    color: '1E293B',
+                    font: 'Arial'
+                  }),
+                ],
+              }),
+            ],
+          }),
+        ],
+      }),
+    ],
+  });
+
+  docChildren.push(passageTable);
+  docChildren.push(new Paragraph({ text: '', spacing: { before: 180, after: 180 } }));
+
+  // 3. PHẦN 2: BẢNG ĐỐI CHIẾU SONG NGỮ TỪNG CÂU THOẠI TRONG ĐOẠN
+  docChildren.push(
+    new Paragraph({
+      heading: HeadingLevel.HEADING_1,
+      spacing: { before: 200, after: 120 },
+      children: [
+        new TextRun({
+          text: 'II. BẢNG ĐỐI CHIẾU TỪNG CÂU THOẠI TRONG ĐOẠN VĂN',
+          bold: true,
+          size: 26,
+          color: '1E3A8A',
+          font: 'Arial'
+        }),
+      ],
+    })
+  );
+
+  const summaryTableRows = [
+    new TableRow({
+      children: [
+        new TableCell({
+          width: { size: 12, type: WidthType.PERCENTAGE },
+          shading: { type: ShadingType.CLEAR, fill: '2563EB' },
+          children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: 'STT / Vị trí', bold: true, color: 'FFFFFF', size: 19, font: 'Arial' })] })],
+        }),
+        new TableCell({
+          width: { size: 36, type: WidthType.PERCENTAGE },
+          shading: { type: ShadingType.CLEAR, fill: '2563EB' },
+          children: [new Paragraph({ children: [new TextRun({ text: 'Câu Tiếng Trung', bold: true, color: 'FFFFFF', size: 19, font: 'Arial' })] })],
+        }),
+        new TableCell({
+          width: { size: 26, type: WidthType.PERCENTAGE },
+          shading: { type: ShadingType.CLEAR, fill: '2563EB' },
+          children: [new Paragraph({ children: [new TextRun({ text: 'Phiên Âm Pinyin', bold: true, color: 'FFFFFF', size: 19, font: 'Arial' })] })],
+        }),
+        new TableCell({
+          width: { size: 26, type: WidthType.PERCENTAGE },
+          shading: { type: ShadingType.CLEAR, fill: '2563EB' },
+          children: [new Paragraph({ children: [new TextRun({ text: 'Dịch Nghĩa Tiếng Việt', bold: true, color: 'FFFFFF', size: 19, font: 'Arial' })] })],
+        }),
+      ],
+    }),
+    ...sentences.map((l, i) => {
+      const isTopic = i === 0 || l.orderIndex === 1;
+      return new TableRow({
+        children: [
+          new TableCell({
+            width: { size: 12, type: WidthType.PERCENTAGE },
+            shading: { type: ShadingType.CLEAR, fill: isTopic ? 'FEF3C7' : (i % 2 === 0 ? 'FFFFFF' : 'F8FAFC') },
+            children: [
+              new Paragraph({
+                alignment: AlignmentType.CENTER,
+                children: [
+                  new TextRun({
+                    text: isTopic ? `#${i + 1} ⭐\n(Chủ đề)` : `#${i + 1}`,
+                    bold: true,
+                    size: 17,
+                    color: isTopic ? 'B45309' : '64748B',
+                    font: 'Arial'
+                  }),
+                ],
+              }),
+            ],
+          }),
+          new TableCell({
+            width: { size: 36, type: WidthType.PERCENTAGE },
+            shading: { type: ShadingType.CLEAR, fill: i % 2 === 0 ? 'FFFFFF' : 'F8FAFC' },
+            children: [new Paragraph({ children: [new TextRun({ text: l.chinese, bold: true, size: 20, color: '1E293B', font: 'Microsoft YaHei' })] })],
+          }),
+          new TableCell({
+            width: { size: 26, type: WidthType.PERCENTAGE },
+            shading: { type: ShadingType.CLEAR, fill: i % 2 === 0 ? 'FFFFFF' : 'F8FAFC' },
+            children: [new Paragraph({ children: [new TextRun({ text: l.pinyin, italics: true, size: 18, color: '059669', font: 'Arial' })] })],
+          }),
+          new TableCell({
+            width: { size: 26, type: WidthType.PERCENTAGE },
+            shading: { type: ShadingType.CLEAR, fill: i % 2 === 0 ? 'FFFFFF' : 'F8FAFC' },
+            children: [new Paragraph({ children: [new TextRun({ text: l.meaning, size: 18, color: '334155', font: 'Arial' })] })],
+          }),
+        ],
+      });
+    }),
+  ];
+
+  docChildren.push(
+    new Table({
+      width: { size: 100, type: WidthType.PERCENTAGE },
+      rows: summaryTableRows,
+    })
+  );
+
+  docChildren.push(new Paragraph({ text: '', spacing: { before: 240, after: 240 } }));
+
+  // 4. PHẦN 3: CHI TIẾT TỪNG CÂU THOẠI KÈM HÌNH ẢNH MINH HỌA 16:9 & NGỮ PHÁP
+  docChildren.push(
+    new Paragraph({
+      heading: HeadingLevel.HEADING_1,
+      spacing: { before: 240, after: 140 },
+      children: [
+        new TextRun({
+          text: 'III. CHI TIẾT TỪNG CÂU THOẠI & ẢNH MINH HỌA 16:9',
+          bold: true,
+          size: 26,
+          color: '1E3A8A',
+          font: 'Arial'
+        }),
+      ],
+    })
+  );
+
+  for (let idx = 0; idx < sentences.length; idx++) {
+    const progress = Math.round(25 + ((idx + 1) / sentences.length) * 65);
+    onProgress?.(progress, `Đang xử lý câu ${idx + 1}/${sentences.length}: "${sentences[idx].chinese.slice(0, 10)}..."`);
+
+    const lessonElements = await createLessonSection(sentences[idx], idx, options);
+    docChildren.push(...lessonElements);
+  }
+
+  onProgress?.(95, 'Đang đóng gói file Word đoạn văn (.docx)...');
+
+  // Build the complete Word Document
+  const doc = new Document({
+    title: docTitle,
+    creator: author,
+    description: `Tài liệu bài đọc đoạn văn tiếng Trung: "${sectionTitle}" gồm ${sentences.length} câu thoại kèm hình ảnh minh họa 16:9 và bài đọc toàn văn liền mạch.`,
+    styles: {
+      default: {
+        document: {
+          run: {
+            font: 'Arial',
+            size: 20,
+            color: '334155',
+          },
+        },
+      },
+    },
+    sections: [
+      {
+        properties: {
+          page: {
+            margin: {
+              top: convertInchesToTwip(0.8),
+              bottom: convertInchesToTwip(0.8),
+              left: convertInchesToTwip(0.8),
+              right: convertInchesToTwip(0.8),
+            },
+          },
+        },
+        headers: {
+          default: new Header({
+            children: [
+              new Paragraph({
+                alignment: AlignmentType.RIGHT,
+                children: [
+                  new TextRun({
+                    text: `ZhongWenGo • Đoạn Văn: ${sectionTitle}`,
+                    size: 16,
+                    color: '94A3B8',
+                    font: 'Arial'
+                  }),
+                ],
+              }),
+            ],
+          }),
+        },
+        footers: {
+          default: new Footer({
+            children: [
+              new Paragraph({
+                alignment: AlignmentType.CENTER,
+                children: [
+                  new TextRun({
+                    text: 'Trang ',
+                    size: 16,
+                    color: '94A3B8',
+                  }),
+                  new TextRun({
+                    children: [PageNumber.CURRENT],
+                    size: 16,
+                    color: '94A3B8',
+                  }),
+                  new TextRun({
+                    text: ' / ',
+                    size: 16,
+                    color: '94A3B8',
+                  }),
+                  new TextRun({
+                    children: [PageNumber.TOTAL_PAGES],
+                    size: 16,
+                    color: '94A3B8',
+                  }),
+                ],
+              }),
+            ],
+          }),
+        },
+        children: docChildren,
+      },
+    ],
+  });
+
+  const blob = await Packer.toBlob(doc);
+  const cleanSection = sectionTitle
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^\w\s-]/g, '')
+    .trim()
+    .replace(/\s+/g, '_');
+  const filename = `ZhongWenGo_DoanVan_${cleanSection || 'DoanVan'}.docx`;
+
+  onProgress?.(100, 'Tải đoạn văn thành công!');
   return { blob, filename };
 }
 

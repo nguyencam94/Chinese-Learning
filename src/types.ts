@@ -1,4 +1,4 @@
-import { TranslationResult, IllustrationStyle } from './services/geminiService';
+import { TranslationResult, IllustrationStyle, CharacterAnalysisResult } from './services/geminiService';
 
 export interface Category {
   id: string;
@@ -33,6 +33,13 @@ export interface SavedSentence extends TranslationResult {
   createdAt: any;
   note?: string;
   difficulty?: 'basic' | 'easy' | 'medium' | 'hard';
+}
+
+export interface SavedCharacter extends CharacterAnalysisResult {
+  id: string;
+  userId?: string;
+  createdAt: any;
+  note?: string;
 }
 
 export interface StudySession {

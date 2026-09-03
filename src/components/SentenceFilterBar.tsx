@@ -1,5 +1,5 @@
 import React from 'react';
-import { Library, Layers, ArrowUpDown, ListOrdered } from 'lucide-react';
+import { Library, Layers, ArrowUpDown, ListOrdered, FileDown } from 'lucide-react';
 import { Category, Section } from '../types';
 
 interface SentenceFilterBarProps {
@@ -11,6 +11,7 @@ interface SentenceFilterBarProps {
   setSelectedSection: (secId: string) => void;
   totalSentenceCount: number;
   onOpenReorderModal?: (section: Section) => void;
+  onExportSectionDocx?: (section: Section) => void;
 }
 
 export default function SentenceFilterBar({
@@ -21,7 +22,8 @@ export default function SentenceFilterBar({
   selectedSection,
   setSelectedSection,
   totalSentenceCount,
-  onOpenReorderModal
+  onOpenReorderModal,
+  onExportSectionDocx
 }: SentenceFilterBarProps) {
   const currentSections = sections.filter(
     (s) => selectedCategory === 'all' || s.categoryId === selectedCategory
@@ -113,17 +115,33 @@ export default function SentenceFilterBar({
               ))}
             </div>
 
-            {/* If a section is selected, show Reorder Button */}
-            {activeSectionObj && onOpenReorderModal && (
-              <button
-                type="button"
-                onClick={() => onOpenReorderModal(activeSectionObj)}
-                className="whitespace-nowrap flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 text-xs font-black transition-all cursor-pointer shadow-xs hover:scale-105"
-                title="Sắp xếp thứ tự các câu trong đoạn này (đặt câu chủ đề, đổi vị trí...)"
-              >
-                <ArrowUpDown size={13} className="text-amber-600" />
-                <span>Sắp xếp thứ tự câu ({activeSectionObj.name})</span>
-              </button>
+            {/* Action buttons when a section is active */}
+            {activeSectionObj && (
+              <div className="flex items-center gap-1.5 shrink-0">
+                {onExportSectionDocx && (
+                  <button
+                    type="button"
+                    onClick={() => onExportSectionDocx(activeSectionObj)}
+                    className="whitespace-nowrap flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-blue-50 hover:bg-blue-100 text-blue-800 border border-blue-200 text-xs font-black transition-all cursor-pointer shadow-xs hover:scale-105 active:scale-95"
+                    title="Tải trọn bộ đoạn văn này dưới dạng file Word (.docx) kèm ảnh minh họa và bài đọc toàn văn"
+                  >
+                    <FileDown size={13} className="text-blue-600" />
+                    <span>Xuất Word Cả Đoạn</span>
+                  </button>
+                )}
+
+                {onOpenReorderModal && (
+                  <button
+                    type="button"
+                    onClick={() => onOpenReorderModal(activeSectionObj)}
+                    className="whitespace-nowrap flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 text-xs font-black transition-all cursor-pointer shadow-xs hover:scale-105"
+                    title="Sắp xếp thứ tự các câu trong đoạn này (đặt câu chủ đề, đổi vị trí...)"
+                  >
+                    <ArrowUpDown size={13} className="text-amber-600" />
+                    <span>Sắp xếp thứ tự</span>
+                  </button>
+                )}
+              </div>
             )}
           </div>
         )}
@@ -135,7 +153,17 @@ export default function SentenceFilterBar({
           <span className="text-xs font-black text-slate-800 flex items-center gap-1.5">
             <Library className="text-primary animate-pulse" size={15} /> Thư viện câu & đoạn văn
           </span>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5">
+            {activeSectionObj && onExportSectionDocx && (
+              <button
+                type="button"
+                onClick={() => onExportSectionDocx(activeSectionObj)}
+                className="text-[9px] font-black bg-blue-100 text-blue-900 px-2 py-0.5 rounded-md flex items-center gap-1"
+                title="Tải Word cả đoạn văn"
+              >
+                <FileDown size={10} /> Word
+              </button>
+            )}
             {activeSectionObj && onOpenReorderModal && (
               <button
                 type="button"

@@ -70,6 +70,26 @@
         "updatedAt": { "type": "string", "format": "date-time", "description": "Timestamp of last update" }
       },
       "required": ["userId", "date", "duration", "updatedAt"]
+    },
+    "SavedCharacter": {
+      "title": "Saved Character",
+      "description": "A single Chinese character analyzed by AI and saved by user with radicals and examples",
+      "type": "object",
+      "properties": {
+        "character": { "type": "string", "description": "The Chinese character" },
+        "pinyin": { "type": "string", "description": "Pinyin pronunciation" },
+        "sinoVietnamese": { "type": "string", "description": "Sino-Vietnamese reading" },
+        "vietnameseMeaning": { "type": "string", "description": "Core Vietnamese meaning" },
+        "totalStrokes": { "type": "integer", "description": "Total number of strokes" },
+        "strokeSequenceInstructions": { "type": "array", "description": "Step-by-step stroke instructions" },
+        "radicals": { "type": "array", "description": "Radicals composing the character" },
+        "composition": { "type": "string", "description": "Character composition explanation" },
+        "examples": { "type": "array", "description": "Compound words containing this character" },
+        "userId": { "type": "string", "description": "The ID of the user" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Timestamp of creation" },
+        "note": { "type": "string", "description": "Optional study note" }
+      },
+      "required": ["character", "pinyin", "sinoVietnamese", "vietnameseMeaning", "totalStrokes", "radicals", "composition", "examples", "userId", "createdAt"]
     }
   },
   "firestore": {
@@ -92,6 +112,10 @@
     "/study_sessions/{sessionId}": {
       "schema": "StudySession",
       "description": "Daily study duration logs"
+    },
+    "/saved_characters/{characterId}": {
+      "schema": "SavedCharacter",
+      "description": "Collection of saved Chinese characters with radicals and vocabulary examples"
     }
   }
 }
